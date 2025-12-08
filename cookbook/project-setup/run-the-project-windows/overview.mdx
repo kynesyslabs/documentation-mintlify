@@ -1,0 +1,122 @@
+---
+title: "Run the Project (Windows)"
+description: "Setup and run the Demos node on Windows using WSL2"
+---
+
+## Prerequisites
+
+- Node version: **20.15.1**
+- VS Code installed
+- Docker Desktop installed
+- WSL2 enabled (see [WSL2 Setup Guide](/cookbook/project-setup/run-the-project-windows/wsl-2-setup))
+
+## Setup Steps
+
+### Step 1: Project Configuration
+
+1. Open the project with **VS Code**
+2. Create a `.env` file in the root directory (if it doesn't exist) and copy the content from `env.example`:
+
+```bash
+CONSENSUS_TIME=10
+RPC_FEE=5
+SERVER_PORT=53550
+EXPOSED_URL=http://127.0.0.1:53550
+```
+
+### Step 2: Generate Keys
+
+Run the project to get the public and private keys (**Note: It will crash, this is expected**):
+
+1. Find the **public key** file in the root directory
+2. Copy the **public key**
+3. Create a file `demos_peerlist.json` in the root directory
+4. Copy the content from `demos_peerlist.json.example` and replace the `"identity"` with your public key
+
+<Frame>
+  <img src="https://lh7-rt.googleusercontent.com/docsz/AD_4nXceZxNlQ2gp247ZQoGCeQ_fwrh5fALwSbfVoBf6yj2qP4JTyXgvToN2hM_DIkGZnFDJ9nL2aX-sOxnuP4iuG9K5AxS-EUM8tO9YaWW3tz2EBXxmhPJVuTh0YiuW1udJUjibE0-L?key=RkbH77fVOlsq6AUc04iv4DYy" alt="Public key configuration" />
+</Frame>
+
+### Step 3: Setup WSL2
+
+[Setup WSL2](/cookbook/project-setup/run-the-project-windows/wsl-2-setup) on your machine if you don't have it installed.
+
+### Step 4: Install Dependencies
+
+Open the Ubuntu terminal and run the following commands:
+
+```bash
+# Go to the project folder (example for Desktop)
+cd /mnt/c/Users/User/Desktop/node
+
+# Verify node version (should be 20.15.1)
+node -v
+
+# Install required packages
+sudo apt-get update
+sudo apt-get install dos2unix
+sudo apt install nodejs
+sudo apt install npm
+sudo npm install -g n
+chmod +x install
+sed -i 's/\r$//' ./install
+./install
+```
+
+<Note>
+If you encounter any issues, check the [Issue Troubleshooting](/cookbook/project-setup/run-the-project-windows/issue-troubleshooting) section.
+</Note>
+
+### Step 5: Configure Docker
+
+1. Open **Docker Desktop**
+2. Go to Settings
+3. In the **General** section, enable the WSL 2-based engine
+
+<Frame>
+  <img src="https://lh7-rt.googleusercontent.com/docsz/AD_4nXfqWOJ5hvQLb2OMTDbLEJRpbpOugZO3SPWQq8DwWnMNjo_9IsCCn2ldMZvATpFo5UeNFm-ZGLi6SDC7OAGiK3L762n28tvSC9QEVPVpnp4SWXooDcSWDHB0Gvb_FN8HxYqZpeNu1Q?key=RkbH77fVOlsq6AUc04iv4DYy" alt="Docker WSL2 settings" />
+</Frame>
+
+4. In Settings, go to **Resources > WSL Integration** and enable WSL 2 and Ubuntu
+
+<Frame>
+  <img src="https://lh7-rt.googleusercontent.com/docsz/AD_4nXe4O7Xa9lwdP2rcEcLy3HcF2bLEghScL2YSR8ZtY-4nbwzydy29mZN7a7-M9EUHp61orcUB6DL7bndy24DqclaUaF9M7ReBdx-6UAV3n__SOJwCEUDOLiX6HC4m-0DGoluRSrt9AQ?key=RkbH77fVOlsq6AUc04iv4DYy" alt="Docker WSL integration" />
+</Frame>
+
+5. Click **Apply & Restart** to apply the changes
+6. Verify Docker in Ubuntu Terminal:
+
+```bash
+docker --version
+```
+
+### Step 6: Run the Project
+
+1. In the Ubuntu terminal, run:
+
+```bash
+sed -i 's/\r$//' ./run
+```
+
+2. Go to the postgres folder and start the database:
+
+```bash
+cd postgres_5332/
+sudo usermod -aG docker $USER
+```
+
+3. Close and open a new WSL terminal window
+
+4. Start the database:
+
+```bash
+cd postgres_5332/
+docker compose up
+```
+
+5. In a new terminal, go back to root directory and run the project:
+
+```bash
+cd ../
+./run
+```

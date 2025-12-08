@@ -1,0 +1,213 @@
+---
+title: "Storage Programs"
+description: "Storage Programs are a powerful key-value storage solution built into the Demos Network, providing developers with decentralized, persistent data stor..."
+---
+# Storage Programs (SDK)
+
+> **Warning**: Storage Programs are still being developed; this documentation is a preview and might not work correctly.
+
+## Introduction
+
+Storage Programs are a powerful key-value storage solution built into the Demos Network, providing developers with decentralized, persistent data storage with flexible access control. Think of Storage Programs as smart, programmable databases that live on the blockchain with built-in permission systems.
+
+## Quick Links
+
+- [Getting Started](./getting-started.md)
+- [Operations Guide](./operations.md)
+- [Access Control](./access-control.md)
+- [RPC Queries](./rpc-queries.md)
+- [API Reference](./api-reference.md)
+- [Cookbook Recipes](/sdk/cookbook/storage-programs/overview)
+- [Backend Architecture](/backend/storage-programs/overview)
+
+## What are Storage Programs?
+
+A Storage Program is a deterministic storage container that allows you to:
+
+- **Store arbitrary data**: Store any JSON-serializable data (objects, arrays, primitives)
+- **Control access**: Choose who can read and write your data
+- **Use deterministic addresses**: Predict storage addresses before creation
+- **Query efficiently**: Read data via RPC without transaction costs
+- **Update atomically**: All writes are atomic and consensus-validated
+
+## Key Features
+
+- **Flexible access control**: Four modes cover private, collaborative, and public scenarios. See the [Access Control guide](./access-control.md) for details.
+- **Deterministic addressing**: `stor-` identifiers are derived from deployer inputs, so clients can pre-compute addresses before deployment.
+- **Consensus-backed writes**: Mutations are validated via consensus while reads are served instantly over RPC.
+- **Developer-friendly API**: High-level SDK helpers plus raw RPC endpoints give you control at the right abstraction.
+- **Predictable limits**: 128KB payload per program, 64 levels of nesting, 256 character keys.
+
+## How Storage Programs Work
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Client Application                     │
+│  (Create, Write, Read, Update Access, Delete)            │
+└─────────────────────────┬───────────────────────────────┘
+                          │
+                ┌─────────┴─────────┐
+                │                   │
+          Write Operations    Read Operations (RPC)
+                │                   │
+                ▼                   ▼
+┌───────────────────────┐  ┌───────────────────────┐
+│  Transaction System   │  │    Query System       │
+│  (Consensus)          │  │    (Direct DB)        │
+└───────┬───────────────┘  └───────┬───────────────┘
+        │                          │
+        ▼                          ▼
+┌──────────────────────────────────────────────────┐
+│         Demos Network Global Chain Registry       │
+│                  (GCR Database)                   │
+│                                                   │
+│  GCR_Main.data = {                               │
+│    variables: { ...your data... },               │
+│    metadata: { programName, deployer, ... }      │
+│  }                                                │
+└──────────────────────────────────────────────────┘
+```
+
+### Data Storage
+
+Storage Programs are stored in the `GCR_Main` table's `data` column (JSONB):
+
+```json
+{
+  "variables": {
+    "username": "alice",
+    "score": 1000,
+    "settings": {
+      "theme": "dark",
+      "notifications": true
+    }
+  },
+  "metadata": {
+    "programName": "myApp",
+    "deployer": "0xdeployer123...",
+    "accessControl": "public",
+    "allowedAddresses": [],
+    "created": 1706745600000,
+    "lastModified": 1706745600000,
+    "size": 2048
+  }
+}
+```
+
+## Use Cases
+
+Looking for implementation-ready patterns? Jump to the [Storage Program Cookbook](../cookbook/storage-programs/examples.md) for end-to-end recipes covering announcements, team workspaces, user profiles, and more. This overview keeps the focus on concepts so each scenario has a single canonical home.
+
+## Core Concepts
+
+### Address Derivation
+
+Storage Program addresses are **deterministic** and **predictable**:
+
+```typescript
+import { deriveStorageAddress } from '@kynesyslabs/demosdk/storage'
+
+// Generate address client-side
+const address = deriveStorageAddress(
+  deployerAddress,  // Your wallet address
+  programName,      // Unique name: "myApp"
+  salt             // Optional salt for uniqueness: "v1"
+)
+
+// Result: "stor-a1b2c3d4e5f6..." (45 characters)
+```
+
+**Format**: `stor-` + 40 hex characters
+
+### Operations Lifecycle
+
+1. **CREATE**: Initialize new storage program with optional data
+2. **WRITE**: Add or update key-value pairs (merges with existing data)
+3. **READ**: Query data via RPC (no transaction needed)
+4. **UPDATE_ACCESS_CONTROL**: Change access mode or allowed addresses (deployer only)
+5. **DELETE**: Remove entire storage program (deployer only)
+
+### Access Control Modes
+
+Each program chooses one of four modes (private, deployer-only, restricted, public). Rather than duplicating the full matrix here, see the [Access Control guide](./access-control.md) for the authoritative table, example flows, and security checklists.
+
+### Storage Limits
+
+These limits ensure blockchain efficiency:
+
+```typescript
+const STORAGE_LIMITS = {
+  MAX_SIZE_BYTES: 128 * 1024,    // 128KB total
+  MAX_NESTING_DEPTH: 64,         // 64 levels of nested objects
+  MAX_KEY_LENGTH: 256            // 256 characters per key name
+}
+```
+
+**Size Calculation**:
+```typescript
+const size = new TextEncoder().encode(JSON.stringify(data)).length
+```
+
+## Security Considerations
+
+### Data Privacy
+
+- **Private/Deployer-Only modes**: Data is stored on blockchain but access-controlled
+- **Encryption recommended**: For sensitive data, encrypt before storing
+- **Public mode**: Anyone can read - never store secrets
+
+### Access Control
+
+- **Deployer verification**: All operations verify deployer signature
+- **Allowed addresses**: Restricted mode checks whitelist
+- **Admin operations**: Only deployer can update access or delete
+
+### Best Practices
+
+✅ **DO**:
+- Use descriptive program names for easy identification
+- Encrypt sensitive data before storing
+- Use public mode for truly public data
+- Test with small data first
+- Add salt for multiple programs with same name
+
+❌ **DON'T**:
+- Store private keys or secrets unencrypted
+- Exceed 128KB limit (transaction will fail)
+- Use deeply nested objects (>64 levels)
+- Store data that changes very frequently (high transaction costs)
+
+## Performance Characteristics
+
+### Write Operations
+- **Latency**: Consensus time (~2-5 seconds)
+- **Cost**: Transaction fee required
+- **Throughput**: Limited by block production
+- **Validation**: Full validation before inclusion
+
+### Read Operations
+- **Latency**: Less than 100ms (direct database query)
+- **Cost**: Free (no transaction needed)
+- **Throughput**: Unlimited (RPC queries)
+- **Consistency**: Eventually consistent with blockchain state
+
+### Storage Efficiency
+- **Overhead**: ~200 bytes metadata per program
+- **Compression**: JSONB compression in PostgreSQL
+- **Indexing**: Efficient JSONB queries
+- **Scalability**: Horizontal scaling with database
+
+## Getting Started
+
+Ready to build with Storage Programs? Head to the [Getting Started](./getting-started.md) guide for your first Storage Program.
+
+## Next Steps
+
+- [Getting Started](./getting-started.md) – create your first Storage Program
+- [Operations](./operations.md) – explore CRUD and access updates
+- [Access Control](./access-control.md) – configure permissions safely
+- [RPC Queries](./rpc-queries.md) – build fast read paths
+- [Cookbook Recipes](../cookbook/storage-programs/examples.md) – apply patterns in real apps
+- [API Reference](./api-reference.md) – look up method signatures

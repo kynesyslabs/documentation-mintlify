@@ -1,0 +1,52 @@
+---
+title: "Browsing The Postgres Db Via Psql"
+description: "Enter the `demosuser` password as `demospassword` and hit enter."
+---
+# Browsing the Postgres DB via psql
+
+`psql` is a cli tool to interact with a posgres db.
+
+### Installation (debian)
+
+```bash
+sudo apt install -y postgresql-common
+sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+sudo apt-get install postgresql-client-16
+```
+
+<iframe src="https://www.postgresql.org/download/linux/debian" width="100%" height="400"></iframe>
+
+### Connecting to the db
+
+```bash
+psql -p 5332 -h localhost demos demosuser
+
+# psql -p <db_port> -h <db_host> <db_name> <db_user>
+```
+
+Enter the `demosuser` password as `demospassword` and hit enter.
+
+<Info>
+credentials are defined at: `postgres/docker-compose.yml in the node repo.`
+</Info>
+
+You can now list available tables using `dt` to get started.
+
+```
+demos-# dt
+               List of relations
+ Schema |       Name        | Type  |   Owner   
+--------+-------------------+-------+-----------
+ public | blocks            | table | demosuser
+ public | consensus         | table | demosuser
+ public | mempool           | table | demosuser
+ public | pgp_key_server    | table | demosuser
+ public | status_hashes     | table | demosuser
+ public | status_native     | table | demosuser
+ public | status_properties | table | demosuser
+ public | transactions      | table | demosuser
+ public | validators        | table | demosuser
+(9 rows)
+```
+
+Have fun!

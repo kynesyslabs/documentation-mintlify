@@ -1,0 +1,101 @@
+---
+title: "Operations"
+description: "This guide explains how each Storage Program operation fits into an end-to-end workflow. For method signatures, payload schemas, and error codes, rely..."
+---
+# Storage Program Operations
+
+> **Warning**: Storage Programs are still being developed; this documentation is a preview and might not work correctly.
+
+This guide explains how each Storage Program operation fits into an end-to-end workflow. For method signatures, payload schemas, and error codes, rely on the [API Reference](./api-reference.md). For concrete implementation patterns, see the [Storage Program Cookbook](../cookbook/storage-programs/examples.md).
+
+## Operation Overview
+
+| Operation | Transaction? | Who Can Execute | Typical Use |
+|-----------|--------------|-----------------|-------------|
+| `create` | ✅ Yes | Any deployer | Provision a new storage namespace with optional data |
+| `write` | ✅ Yes | Deployer + allowed addresses | Merge updates into existing data |
+| `read` | ❌ No (RPC) | According to access mode | Fetch storage content or metadata |
+| `updateAccessControl` | ✅ Yes | Deployer only | Change access mode and/or allowlist |
+| `delete` | ✅ Yes | Deployer only | Remove a storage program and its data |
+
+## Create
+
+**Goal**: Materialise a deterministic `stor-` address on-chain and (optionally) seed initial state.
+
+**Workflow**
+1. Derive the address client-side (reuse salts if you need different versions).
+2. Validate payload size (`<128KB`) and nesting before submitting a transaction.
+3. Submit `create` with the desired access mode and optional `allowedAddresses`.
+4. Wait for consensus confirmation if the caller depends on the program immediately.
+
+**Pre-flight checks**
+- Restricted mode must include at least one allowlisted address.
+- Decide whether to encrypt sensitive fields up front; the network stores JSON as-is.
+
+**References**: [API Reference – create](./api-reference.md#sdk-methods), [Cookbook – provisioning flows](../cookbook/storage-programs/examples.md).
+
+## Write
+
+**Goal**: Merge new key/value pairs or nested data into the existing JSON document.
+
+**Workflow**
+1. Fetch current state if you need to apply deltas (reads are free).
+2. Construct a payload that only includes the keys you intend to update.
+3. Submit a `write` transaction; consensus will merge it with the existing document.
+4. Optionally re-read to confirm the write and update caches or UI state.
+
+**Pre-flight checks**
+- Combined data size after merge must remain under 128KB.
+- Callers must satisfy access control (deployer or allowlisted address).
+- Consider optimistic UI updates paired with a rollback path for failures.
+
+**References**: [API Reference – write](./api-reference.md#sdk-methods), [Cookbook – update patterns](../cookbook/storage-programs/examples.md).
+
+## Read
+
+**Goal**: Retrieve storage variables or metadata over RPC with no transaction cost.
+
+**Workflow**
+1. Use `read(address)` for the full document or `read(address, key)` for scoped lookups.
+2. Cache aggressively—responses include `metadata.lastModified` so you can detect changes.
+3. Parallelise reads across addresses using `Promise.all` when fetching many programs.
+
+**Pre-flight checks**
+- Ensure the caller has read permission under the current access mode.
+- Treat responses as eventually consistent; pair with webhooks/polling if you need freshness.
+
+**References**: [RPC Queries guide](./rpc-queries.md), [API Reference – read](./api-reference.md#sdk-methods).
+
+## Update Access Control
+
+**Goal**: Switch access modes or adjust the allowlist for restricted programs.
+
+**Workflow**
+1. Read `metadata` to confirm deployer address and current configuration.
+2. Build the desired change:
+   - `accessControl: "private" | "public" | "restricted" | "deployer-only"`
+   - `allowedAddresses: string[]` (complete list, not patches)
+3. Submit the `updateAccessControl` transaction.
+4. Notify affected clients (e.g., flush caches, inform collaborators).
+
+**Pre-flight checks**
+- Only the deployer may call this method.
+- Restricted mode requires a non-empty allowlist.
+- When opening data (restricted → public), review contents to avoid leaking secrets.
+
+**References**: [Access Control guide](./access-control.md), [API Reference – updateAccessControl](./api-reference.md#sdk-methods).
+
+## Delete
+
+**Goal**: Remove an entire Storage Program, including variables and metadata.
+
+**Workflow**
+1. Confirm that no downstream systems rely on the existing data (deletion is irreversible).
+2. Submit a `delete` transaction from the deployer address.
+3. Update any application indexes or caches that referenced the storage address.
+
+**Pre-flight checks**
+- Only the deployer can delete.
+- Communicate the removal to collaborators or users to prevent dangling references.
+
+**References**: [API Reference – delete](./api-reference.md#sdk-methods), [Cookbook – teardown routines](../cookbook/storage-programs/examples.md).

@@ -1,0 +1,93 @@
+---
+title: "Issue Troubleshooting"
+description: "Common issues and solutions when running the project on Windows"
+---
+
+## Issue 1: Node.js Installation Problems
+
+If you encounter installation issues, follow these steps:
+
+<Frame>
+  <img src="/images/image (1).png" alt="Node.js installation issue" />
+</Frame>
+
+### Solution
+
+1. First, remove any existing installations:
+
+```bash
+sudo apt-get remove nodejs npm
+sudo apt-get clean
+sudo apt-get autoremove
+```
+
+2. Update your package lists:
+
+```bash
+sudo apt-get update
+```
+
+3. Install curl if you don't have it (skip if already installed):
+
+```bash
+sudo apt-get install curl
+```
+
+4. Add the NodeSource repository for Node.js 20.x:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+```
+
+5. Install Node.js (this will include npm):
+
+```bash
+sudo apt-get install -y nodejs
+```
+
+6. Verify the installation:
+
+```bash
+node --version
+npm --version
+```
+
+## Issue 2: Yarn Command Failed
+
+<Frame>
+  <img src="/images/image (2).png" alt="Yarn command failed" />
+</Frame>
+
+### Solution
+
+1. First, check if the Node version is **20.15.1**
+
+2. Clean your yarn cache and remove `node_modules`:
+
+```bash
+yarn cache clean
+rm -rf node_modules
+```
+
+3. Make sure you have the necessary build tools:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential python3 make gcc g++
+```
+
+4. If you're still facing issues with `eiows`, try using a pre-built binary. Add this to your `package.json`:
+
+```json
+{
+  "resolutions": {
+    "eiows": "^6.7.2"
+  }
+}
+```
+
+5. Then run:
+
+```bash
+yarn install
+```

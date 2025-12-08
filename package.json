@@ -1,0 +1,17 @@
+{
+  "name": "demos-network-docs",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "mintlify dev",
+    "build": "mintlify build",
+    "preview": "mintlify preview"
+  },
+  "keywords": ["demos", "blockchain", "documentation"],
+  "author": "Kynesys Labs",
+  "license": "MIT",
+  "description": "Demos Network Technical Documentation",
+  "devDependencies": {
+    "mintlify": "^4.2.226"
+  }
+}

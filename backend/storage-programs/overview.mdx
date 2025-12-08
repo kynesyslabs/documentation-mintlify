@@ -1,0 +1,114 @@
+---
+title: "Storage Programs"
+description: "Storage Programs are first-class key–value containers that live inside the Demos Network's Global Change Registry (GCR). This document describes how t..."
+---
+# Storage Programs Architecture
+
+> **Warning**: Storage Programs are still being developed; this documentation is a preview and might not work correctly.
+
+Storage Programs are first-class key–value containers that live inside the Demos Network's Global Change Registry (GCR). This document describes how the network stores, validates, and serves Storage Program data so backend operators understand the moving pieces.
+
+## Network Responsibilities
+
+- **Deterministic provisioning** – Addresses are derived from deployer metadata, allowing replicas to agree on identifiers before the program exists on-chain.
+- **Consensus validation** – Create, write, access-control updates, and delete operations are executed through the transaction pipeline and require consensus signatures.
+- **Immediate query availability** – The query subsystem can serve reads directly from the replicated database without waiting for block production.
+- **Permission enforcement** – Access rules are enforced server-side during both mutation and read paths, keeping unauthorized clients from observing private data.
+
+## Data Flow
+
+```
+┌─────────────────────────────────────────────┐
+│               Client Applications            │
+│   (create, write, update access, delete)     │
+└─────────────────┬────────────────────────────┘
+                  │
+          ┌───────▼────────┐
+          │ Transaction    │   Mutations validated by consensus
+          │ Pipeline       │───────────────────────────────┐
+          └───────┬────────┘                               │
+                  │                                        │
+                  ▼                                        │
+        ┌────────────────────┐                             │
+        │  Consensus Layer   │                             │
+        └───────┬────────────┘                             │
+                │                                          │
+                ▼                                          │
+┌──────────────────────────────────────────────────────────┐
+│          Global Change Registry (PostgreSQL)             │
+│  Table: GCR_Main                                         │
+│  Column: data (JSONB)                                    │
+│  - variables: user payload                              │
+│  - metadata: deployer, access control, timestamps, etc. │
+└──────────────────────────────────────────────────────────┘
+                ▲                                          │
+                │                                          │
+        ┌───────┴────────┐                                 │
+        │ Query Service  │────────────── RPC READ ─────────┘
+        └────────────────┘
+```
+
+## Persistence Model
+
+Each Storage Program row is serialized into the `GCR_Main.data` JSONB column with two top-level objects:
+
+```json
+{
+  "variables": {
+    "username": "alice",
+    "score": 1000,
+    "settings": {
+      "theme": "dark",
+      "notifications": true
+    }
+  },
+  "metadata": {
+    "programName": "myApp",
+    "deployer": "0xdeployer123...",
+    "accessControl": "public",
+    "allowedAddresses": [],
+    "created": 1706745600000,
+    "lastModified": 1706745600000,
+    "size": 2048
+  }
+}
+```
+
+- **variables** – Arbitrary JSON payload managed by the deployer.
+- **metadata** – Network-managed fields that clients can rely on for auditing and access checks.
+
+## Deterministic Addressing
+
+Storage Program identifiers are derived on the client and verified by the network:
+
+```
+address = stor-{SHA256(deployerAddress + programName + salt)}
+```
+
+Consensus nodes recompute the address during CREATE to guarantee uniqueness. Because the derivation is deterministic, clients can safely reference programs before they exist and the backend can reject collisions or mismatched inputs.
+
+## Access Control Enforcement
+
+During transaction execution the validator layer enforces the configured mode:
+
+- **private / deployer-only** – Only the deploying address may create, read, or mutate data.
+- **public** – Anyone can issue read RPCs; only the deployer can commit writes.
+- **restricted** – Membership lists are stored in metadata and validated during both read and write phases.
+
+RPC handlers consult the same metadata before serving results, ensuring confidentiality even when requests originate outside the trusted perimeter.
+
+## Resource Limits
+
+To keep Storage Programs fast to replicate and query, the backend validates:
+
+- Maximum serialized payload of **128 KB** per program.
+- Maximum nesting depth of **64** JSON levels.
+- Maximum key length of **256** characters.
+
+Requests exceeding these thresholds are rejected during consensus execution before they reach the data layer.
+
+## Related Guides
+
+- Developer-first overview: [SDK Storage Programs](/sdk/storage-programs/overview)
+- Implementation recipes: [Storage Program Cookbook](/sdk/cookbook/storage-programs/overview)
+- Client operations: [SDK Operations Guide](../../sdk/storage-programs/operations.md)

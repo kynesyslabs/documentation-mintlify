@@ -1,0 +1,381 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Demos Network",
+  "description": "Technical documentation for the Demos Network - a borderless interconnectivity layer enabling seamless interoperability across various chains and web contexts.",
+  "colors": {
+    "primary": "#3B82F6",
+    "light": "#60A5FA",
+    "dark": "#1E40AF"
+  },
+  "logo": {
+    "light": "/images/logo-light.svg",
+    "dark": "/images/logo-dark.svg"
+  },
+  "favicon": "/images/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Introduction",
+            "icon": "house",
+            "pages": [
+              "introduction/overview",
+              "introduction/what-is-demos-network",
+              "introduction/demos-network-architecture"
+            ]
+          },
+          {
+            "group": "FAQ",
+            "icon": "circle-question",
+            "pages": [
+              "faq"
+            ]
+          },
+          {
+            "group": "Cookbook",
+            "icon": "book",
+            "pages": [
+              "cookbook/overview",
+              {
+                "group": "Project Setup",
+                "pages": [
+                  "cookbook/project-setup/overview",
+                  "cookbook/project-setup/run-the-project-macos",
+                  "cookbook/project-setup/run-the-project-ubuntu",
+                  {
+                    "group": "Windows Setup",
+                    "pages": [
+                      "cookbook/project-setup/run-the-project-windows/overview",
+                      "cookbook/project-setup/run-the-project-windows/wsl-2-setup",
+                      "cookbook/project-setup/run-the-project-windows/issue-troubleshooting"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDK",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "icon": "rocket",
+            "pages": [
+              "sdk/getting-started"
+            ]
+          },
+          {
+            "group": "WebSDK",
+            "icon": "code",
+            "pages": [
+              "sdk/websdk/overview",
+              {
+                "group": "Authentication",
+                "pages": [
+                  "sdk/websdk/authentication/overview",
+                  "sdk/websdk/authentication/fido2-passkeys/overview",
+                  "sdk/websdk/authentication/fido2-passkeys/under-the-hood"
+                ]
+              },
+              "sdk/websdk/nodecalls",
+              {
+                "group": "Transactions",
+                "pages": [
+                  "sdk/websdk/transactions/overview",
+                  "sdk/websdk/transactions/creating-a-transaction",
+                  "sdk/websdk/transactions/signing-a-transaction",
+                  "sdk/websdk/transactions/broadcasting-a-transaction"
+                ]
+              },
+              {
+                "group": "L2PS SDK",
+                "pages": [
+                  "sdk/websdk/l2ps-sdk/overview",
+                  "sdk/websdk/l2ps-sdk/the-l2ps-module",
+                  "sdk/websdk/l2ps-sdk/interacting-with-the-l2ps",
+                  "sdk/websdk/l2ps-sdk/l2ps-messaging-system"
+                ]
+              },
+              {
+                "group": "Instant Messaging",
+                "pages": [
+                  "sdk/websdk/instant-messaging/overview",
+                  "sdk/websdk/instant-messaging/what-is-the-instant-messaging-protocol",
+                  "sdk/websdk/instant-messaging/architecture-overview",
+                  "sdk/websdk/instant-messaging/encryption",
+                  "sdk/websdk/instant-messaging/quickstart",
+                  "sdk/websdk/instant-messaging/message-types",
+                  "sdk/websdk/instant-messaging/api-reference",
+                  "sdk/websdk/instant-messaging/faq"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "Cross Chain",
+            "icon": "link",
+            "pages": [
+              "sdk/cross-chain/overview",
+              "sdk/cross-chain/general-layout-of-the-xm-sdks",
+              "sdk/cross-chain/evm",
+              "sdk/cross-chain/btc",
+              "sdk/cross-chain/solana",
+              "sdk/cross-chain/aptos",
+              "sdk/cross-chain/multiversx-egld",
+              "sdk/cross-chain/near",
+              "sdk/cross-chain/ibc",
+              "sdk/cross-chain/ton",
+              "sdk/cross-chain/xrpl",
+              "sdk/cross-chain/ten",
+              "sdk/cross-chain/the-xmscript",
+              "sdk/cross-chain/identities"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "icon": "wrench",
+            "pages": [
+              "sdk/demoswork",
+              "sdk/utilities"
+            ]
+          },
+          {
+            "group": "Storage Programs",
+            "icon": "database",
+            "pages": [
+              "sdk/storage-programs/overview",
+              "sdk/storage-programs/getting-started",
+              "sdk/storage-programs/access-control",
+              "sdk/storage-programs/operations",
+              "sdk/storage-programs/rpc-queries",
+              "sdk/storage-programs/api-reference"
+            ]
+          },
+          {
+            "group": "SDK Cookbook",
+            "icon": "book-open",
+            "pages": [
+              "sdk/cookbook/overview",
+              {
+                "group": "Storage Programs Examples",
+                "pages": [
+                  "sdk/cookbook/storage-programs/overview",
+                  "sdk/cookbook/storage-programs/examples"
+                ]
+              },
+              {
+                "group": "Demoswork",
+                "pages": [
+                  "sdk/cookbook/demoswork/overview",
+                  "sdk/cookbook/demoswork/creating-work-steps",
+                  "sdk/cookbook/demoswork/conditional-operation",
+                  "sdk/cookbook/demoswork/base-operation",
+                  "sdk/cookbook/demoswork/signing-and-broadcasting"
+                ]
+              },
+              {
+                "group": "Transactions",
+                "pages": [
+                  "sdk/cookbook/transactions/overview",
+                  "sdk/cookbook/transactions/crosschain-transaction",
+                  "sdk/cookbook/transactions/native-transactions"
+                ]
+              },
+              {
+                "group": "SWAP",
+                "pages": [
+                  "sdk/cookbook/swap/overview",
+                  "sdk/cookbook/swap/crosschain-swap"
+                ]
+              },
+              "sdk/cookbook/evm-contract-write-transactions"
+            ]
+          },
+          {
+            "group": "Web2 Integration",
+            "icon": "globe",
+            "pages": [
+              "sdk/web2/overview",
+              "sdk/web2/quick-start",
+              {
+                "group": "DAHR API Reference",
+                "pages": [
+                  "sdk/web2/dahr-api-reference/overview",
+                  "sdk/web2/dahr-api-reference/types"
+                ]
+              },
+              "sdk/web2/making-requests",
+              {
+                "group": "Identities",
+                "pages": [
+                  "sdk/web2/identities/overview",
+                  "sdk/web2/identities/twitter",
+                  "sdk/web2/identities/github",
+                  "sdk/web2/identities/telegram"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "Bridges",
+            "icon": "bridge",
+            "pages": [
+              "sdk/bridges/overview",
+              "sdk/bridges/rubic-bridge-test"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "icon": "flask",
+            "pages": [
+              "sdk/post-quantum-cryptography",
+              "sdk/changelog"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Backend",
+        "groups": [
+          {
+            "group": "Internal Mechanisms",
+            "icon": "gears",
+            "pages": [
+              "backend/internal-mechanisms/overview",
+              "backend/internal-mechanisms/network-time-synchronization",
+              "backend/internal-mechanisms/cross-context-identities"
+            ]
+          },
+          {
+            "group": "Global Change Registry",
+            "icon": "book",
+            "pages": [
+              "backend/global-change-registry/overview",
+              "backend/global-change-registry/gcr-structure",
+              "backend/global-change-registry/how-is-gcr-synced"
+            ]
+          },
+          {
+            "group": "Consensus Mechanism",
+            "icon": "shield-check",
+            "pages": [
+              "backend/consensus-mechanism/overview",
+              "backend/consensus-mechanism/unparalleled-scalability",
+              "backend/consensus-mechanism/decentralization-in-por-bft",
+              "backend/consensus-mechanism/enhanced-security",
+              "backend/consensus-mechanism/comparative-advantage",
+              "backend/consensus-mechanism/addressing-potential-criticisms",
+              "backend/consensus-mechanism/conclusion"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "icon": "sitemap",
+            "pages": [
+              "backend/communications-stack",
+              "backend/storage-programs/overview",
+              "backend/l2ps-subnet-framework/overview",
+              "backend/l2ps-subnet-framework/how-are-l2ps-transactions-handled"
+            ]
+          },
+          {
+            "group": "MCP Server",
+            "icon": "server",
+            "pages": [
+              "backend/mcp-server/overview",
+              "backend/mcp-server/configuration",
+              "backend/mcp-server/architecture",
+              "backend/mcp-server/monitoring-endpoint",
+              "backend/mcp-server/available-tools",
+              "backend/mcp-server/client-usage",
+              "backend/mcp-server/troubleshooting"
+            ]
+          },
+          {
+            "group": "Bridges",
+            "icon": "bridge",
+            "pages": [
+              "backend/bridges/overview",
+              "backend/bridges/rubic-bridge"
+            ]
+          },
+          {
+            "group": "Developers Testbed",
+            "icon": "flask",
+            "pages": [
+              "backend/developers-testbed/overview",
+              "backend/developers-testbed/setting-up-the-environment",
+              "backend/developers-testbed/setting-up-the-repository",
+              "backend/developers-testbed/installing-dependencies",
+              "backend/developers-testbed/node-configuration",
+              "backend/developers-testbed/running-the-node"
+            ]
+          },
+          {
+            "group": "Miscellaneous",
+            "icon": "ellipsis",
+            "pages": [
+              "backend/miscellaneous/overview",
+              "backend/miscellaneous/browsing-the-postgres-db-via-psql",
+              "backend/miscellaneous/backing-up-and-restoring-a-node",
+              "backend/miscellaneous/joining-the-testnet-using-a-custom-genesis"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Frontend",
+        "groups": [
+          {
+            "group": "Wallet Provider",
+            "icon": "wallet",
+            "pages": [
+              "frontend/demos-providers-discovery-mechanism",
+              "frontend/demos-wallet-provider-api/overview",
+              "frontend/demos-wallet-provider-api/wallet-provider-api-methods"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "API Reference",
+          "href": "https://kynesyslabs.github.io/demosdk-api-ref/index.html",
+          "icon": "code"
+        },
+        {
+          "anchor": "Discord",
+          "href": "https://discord.gg/SdRqbKEcEJ",
+          "icon": "discord"
+        },
+        {
+          "anchor": "Status",
+          "href": "https://status.demos.sh/",
+          "icon": "signal"
+        },
+        {
+          "anchor": "Explorer",
+          "href": "https://explorer.demos.sh",
+          "icon": "magnifying-glass"
+        }
+      ]
+    }
+  },
+  "footer": {
+    "socials": {
+      "discord": "https://discord.gg/SdRqbKEcEJ",
+      "github": "https://github.com/kynesyslabs"
+    }
+  },
+  "feedback": {
+    "thumbsRating": true,
+    "suggestEdit": true
+  }
+}
