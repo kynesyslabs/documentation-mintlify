@@ -20,7 +20,7 @@ const demos = new Demos();
 await demos.connect("https://demosnode.discus.sh");
 
 // Connect wallet
-const mnemonic = demos.newMmenonic();
+const mnemonic = demos.newMnenonic();
 await demos.connectWallet(mnemonic);
 console.log("Demos Address:", demos.getEd25519Address());
 ```

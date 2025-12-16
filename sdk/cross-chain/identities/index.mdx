@@ -34,7 +34,6 @@ import { InferFromSignaturePayload } from "@kynesyslabs/demosdk/types/abstractio
 Connect your wallet to the XM instance and create a signature
 
 ```javascript
-// connect your
 const xmAddress = instance.getAddress();
 const message = `Link ${instance.name} address ${address} to Demos`;
 const signature = await instance.signMessage(message);
@@ -66,7 +65,7 @@ const payload: InferFromSignaturePayload = {
 
 #### 3. Connecting to the network
 
-Create a new `Demos` object and connnect the RPC and your private key.
+Create a new `Demos` object and connect the RPC and your private key.
 
 ```typescript
 const rpc = "https://demosnode.discus.sh";
