@@ -1,0 +1,129 @@
+---
+title: Unstoppable Domains
+description: Unstoppable Domains(UD) provides user-owned, blockchain-based domain names that serve as universal digital identities for the decentralized web. You can link your Web3 unstoppable domain as an identity using the Demos SDK by following this guide.
+icon: globe
+---
+
+# Unstoppable Domains
+
+[Unstoppable Domains](https://unstoppabledomains.com) (UD) provides user-owned, blockchain-based domain names that serve as universal digital identities for the decentralized web. You can link your Web3 unstoppable domain as an identity using the Demos SDK by following this guide.
+
+## Initialization
+
+Initialize a new `Demos` class instance to communicate with the Demos Network:
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk";
+
+// Connect to Demos RPC
+const demos = new Demos();
+await demos.connect("https://demosnode.discus.sh");
+
+// Connect wallet
+const mnemonic = demos.newMnenonic();
+await demos.connectWallet(mnemonic);
+console.log("Demos Address:", demos.getEd25519Address());
+```
+
+## Connect Signing Wallet
+
+Connect the crosschain wallet to use to prove ownership of the domain. Assuming you want to sign using your ETH wallet, that would look like this:
+
+```typescript
+import { EVM } from "@kynesyslabs/demosdk/xmcore";
+
+const evm = await EVM.create("https://ethereum-rpc.publicnode.com");
+
+// Replace with your private key or mnemonic
+await evm.connectWallet(ETH_PRIVATE_KEY);
+console.log("ETH address: ", evm.getAddress());
+```
+
+{% hint style="info" %}
+You can use the domain owner address or any of the addresses added as records to sign the proof of ownership payload. You can sign using any of the [supported chains](./README.md#supported-blockchains).
+{% endhint %}
+
+## Resolve UD Domain
+
+Lookup your domain and fetch its metadata:
+
+```typescript
+import { Identities } from "@kynesyslabs/demosdk/abstraction";
+const identities = new Identities();
+
+// Replace with your domain
+const resolutionData = await identities.resolveUDDomain(demos, "aladdin.demos");
+console.log("Domain resolution data:", resolutionData);
+```
+
+The `resolutionData` object contains information about your domain including the owner and records attached to it. That looks something like this:
+
+```typescript
+const resolutionData = {
+  domain: "0xbejesus.lfg",
+  network: "polygon",
+  registryType: "UNS",
+  authorizedAddresses: [
+    // RECORDS
+    {
+      address: "39SHnACs1Rv3wv...",
+      recordKey: "crypto.SOL.address",
+      signatureType: "solana",
+    },
+    {
+      address: "39SHnACs1Rv3wv...",
+      recordKey: "token.SOL.SOL.SOL.address",
+      signatureType: "solana",
+    },
+    // ... more records here
+  ],
+  metadata: {
+    evm: {
+      tokenId:
+        "0x794b63bcd20b66f28744a844e0751cfbac305c3427266490e9651336d093ea49",
+      owner: "0x0c99aDe44A554B...",
+      resolver: "0xa9a6A3626993D487d2Dbda3173cf58cA1a9D9e9f",
+    },
+  },
+};
+```
+
+Finally, use the `resolutionData` to link your domain to your Demos address:
+
+```typescript
+const evmAddress = evm.getAddress();
+const demosAddress = demos.getEd25519Address();
+
+const challenge = await identities.generateUDChallenge(
+  demosAddress,
+  evmAddress
+);
+const signature = await evm.signMessage(challenge);
+
+const validityData = await identities.addUnstoppableDomainIdentity(
+  demos, // demos instance
+  evmAddress, // evm address
+  signature, // challenge signature
+  challenge, // signed challenge
+  resolutionData // domain resolution data
+);
+
+console.log("Validity Data:", JSON.stringify(validityData, null, 2));
+
+// Broadcast validity data to apply transaction
+if (validityData.result === 200) {
+  const res = await demos.broadcast(validityData);
+  console.log("Broadcast result:", JSON.stringify(res, null, 2));
+}
+```
+
+The `addUnstoppableDomainIdentity` uses the connected cross-chain wallet to create a proof of ownership payload, then sends the payload to the Demos RPC for verification.
+
+## Getting Connected UD Domains
+
+You can fetch the UD Domains connected to your account as shown:
+
+```typescript
+const domainsRes = await identities.getUDIdentities(demos);
+console.log("UD Domains Res:", JSON.stringify(domainsRes, null, 2));
+```
