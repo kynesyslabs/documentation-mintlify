@@ -27,7 +27,8 @@ console.log("Demos Address:", demos.getEd25519Address());
 
 Connect the crosschain wallet to use to prove ownership of the domain. Assuming you want to sign using your ETH wallet, that would look like this:
 
-```typescript
+<CodeGroup>
+```typescript EVM
 import { EVM } from "@kynesyslabs/demosdk/xmcore";
 
 const evm = await EVM.create("https://ethereum-rpc.publicnode.com");
@@ -36,6 +37,17 @@ const evm = await EVM.create("https://ethereum-rpc.publicnode.com");
 await evm.connectWallet(ETH_PRIVATE_KEY);
 console.log("ETH address: ", evm.getAddress());
 ```
+
+```typescript SOLANA
+import { SOLANA } from "@kynesyslabs/demosdk/xmcore";
+
+const solana = await SOLANA.create("https://api.mainnet-beta.solana.com");
+
+// Replace with your private key or mnemonic
+await solana.connectWallet(SOLANA_PRIVATE_KEY);
+console.log("SOLANA address: ", solana.getAddress());
+```
+</CodeGroup>
 
 <Info>
 You can use the domain owner address or any of the addresses added as records to sign the proof of ownership payload. You can sign using any of the [supported chains](/sdk/cross-chain/overview#supported-blockchains).
@@ -88,7 +100,8 @@ const resolutionData = {
 
 Finally, use the `resolutionData` to link your domain to your Demos address:
 
-```typescript
+<CodeGroup>
+```typescript EVM
 const evmAddress = evm.getAddress();
 const demosAddress = demos.getEd25519Address();
 
@@ -99,11 +112,11 @@ const challenge = await identities.generateUDChallenge(
 const signature = await evm.signMessage(challenge);
 
 const validityData = await identities.addUnstoppableDomainIdentity(
-  demos, // demos instance
-  evmAddress, // evm address
-  signature, // challenge signature
-  challenge, // signed challenge
-  resolutionData // domain resolution data
+  demos,                   // demos instance
+  evmAddress,              // evm address
+  signature,               // challenge signature
+  challenge,               // signed challenge
+  resolutionData           // domain resolution data
 );
 
 console.log("Validity Data:", JSON.stringify(validityData, null, 2));
@@ -114,6 +127,34 @@ if (validityData.result === 200) {
   console.log("Broadcast result:", JSON.stringify(res, null, 2));
 }
 ```
+
+```typescript SOLANA
+const solanaAddress = solana.getAddress();
+const demosAddress = demos.getEd25519Address();
+
+const challenge = await identities.generateUDChallenge(
+  demosAddress,
+  solanaAddress
+);
+const signature = await solana.signMessage(challenge);
+
+const validityData = await identities.addUnstoppableDomainIdentity(
+  demos,                    // demos instance
+  solanaAddress,            // solana address
+  signature,                // challenge signature
+  challenge,                // signed challenge
+  resolutionData            // domain resolution data
+);
+
+console.log("Validity Data:", JSON.stringify(validityData, null, 2));
+
+// Broadcast validity data to apply transaction
+if (validityData.result === 200) {
+  const res = await demos.broadcast(validityData);
+  console.log("Broadcast result:", JSON.stringify(res, null, 2));
+}
+```
+</CodeGroup>
 
 The `addUnstoppableDomainIdentity` uses the connected cross-chain wallet to create a proof of ownership payload, then sends the payload to the Demos RPC for verification.
 
