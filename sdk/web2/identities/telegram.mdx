@@ -170,7 +170,7 @@ Use the DEMOS SDK (web) and obtain (or generate) a wallet/key pair. In productio
 import { Demos } from "@kynesyslabs/demosdk/websdk";
 
 // the DEMOS rpc (HTTP endpoint of a node)
-const rpc = "https://demosnode.discus.sh";
+const rpc = "https://node2.demos.sh";
 
 const demos = new Demos();
 await demos.connect(rpc);
@@ -408,7 +408,7 @@ Stages emitted:
 
 | Variable                       | Description                    | Example                        |
 | ------------------------------ | ------------------------------ | ------------------------------ |
-| `VITE_DEMOS_NODE_URL`          | Demos node base URL            | `https://demosnode.discus.sh`  |
+| `VITE_DEMOS_NODE_URL`          | Demos node base URL            | `https://node2.demos.sh`  |
 | `VITE_TELEGRAM_BOT_SERVER_URL` | Your bot verification endpoint | `https://your-bot.example.com` |
 | `VITE_TELEGRAM_BOT_USERNAME`   | Bot username (for widget)      | `demos_prod_bot`               |
 | `VITE_FRONTEND_URL`            | Public origin hosting widget   | `https://app.example.com`      |

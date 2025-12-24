@@ -44,7 +44,7 @@ After the user authorizes, GitHub redirects back with a `code` parameter. Exchan
 import { Demos } from "@kynesyslabs/demosdk/websdk";
 
 const demos = new Demos();
-await demos.connect("https://demosnode.discus.sh");
+await demos.connect("https://node2.demos.sh");
 
 // Get the authorization code from the URL
 const urlParams = new URLSearchParams(window.location.search);
@@ -121,7 +121,7 @@ import { Demos } from "@kynesyslabs/demosdk/websdk";
 import { Identities } from "@kynesyslabs/demosdk/abstraction";
 
 // the DEMOS rpc
-const rpc = "https://demosnode.discus.sh"
+const rpc = "https://node2.demos.sh"
 
 const demos = new Demos();
 await demos.connect(rpc);

@@ -4,24 +4,24 @@ description: "To add a node to a restored network, you'll need to replace the de
 ---
 # Joining the testnet using a custom genesis
 
-To add a node to a restored network, you'll need to replace the default genesis file with the genesis file of a peer already in the network. You can get the genesis of a peer at `/genesis`. eg. [https://demosnode.discus.sh/genesis](https://demosnode.discus.sh/genesis).
+To add a node to a restored network, you'll need to replace the default genesis file with the genesis file of a peer already in the network. You can get the genesis of a peer at `/genesis`. eg. [https://node2.demos.sh/genesis](https://node2.demos.sh/genesis).
 
 At the root of the node source, you can run the following command to download and replace the `genesis.json` file:
 
 ```sh
-curl -o data/genesis.json https://demosnode.discus.sh/genesis
+curl -o data/genesis.json https://node2.demos.sh/genesis
 ```
 
 Then update `demos_peerlist.json` to locate the remote peer:
 
 ```json
 {
-    "0xpubkey": "https://demosnode.discus.sh"
+    "0xpubkey": "https://node2.demos.sh"
 }
 ```
 
 <Info>
-You can get the remote peer's public key by going to `/info` .eg. [https://demosnode.discus.sh/info](https://demosnode.discus.sh/info).
+You can get the remote peer's public key by going to `/info` .eg. [https://node2.demos.sh/info](https://node2.demos.sh/info).
 </Info>
 
 Finally, run the node with the `-c true` flag to delete the database:
