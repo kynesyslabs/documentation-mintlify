@@ -35,8 +35,8 @@
             ]
           },
           {
-            "group": "Cookbook",
-            "icon": "book",
+            "group": "Node Setup",
+            "icon": "server",
             "pages": [
               "cookbook/overview",
               {
