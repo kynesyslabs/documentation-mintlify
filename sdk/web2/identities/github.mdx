@@ -1,17 +1,123 @@
 ---
 title: "Github"
-description: "You can associate your GitHub account with your DEMOS address by following these steps:"
+description: "You can associate your GitHub account with your DEMOS address using OAuth or gist-based verification."
 icon: "github"
 ---
 
 # GitHub
 
-You can associate your GitHub account with your DEMOS address by following these steps:
+You can associate your GitHub account with your DEMOS address using one of two methods:
+
+1. **OAuth Flow** (Recommended) - Seamless authentication through GitHub's OAuth
+2. **Gist-based Verification** - Manual proof creation via GitHub Gist
+
+---
+
+## Method 1: OAuth Flow (Recommended)
+
+The OAuth flow provides a seamless user experience by authenticating directly with GitHub.
+
+### Prerequisites
+
+Your application needs to implement a GitHub OAuth flow. The DEMOS node will exchange the authorization code for user verification.
+
+### 1. Initiate OAuth Flow
+
+Redirect users to GitHub's authorization endpoint:
+
+```typescript
+const clientId = "YOUR_GITHUB_CLIENT_ID"
+const redirectUri = encodeURIComponent("YOUR_CALLBACK_URL")
+const scope = "read:user"
+
+const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}`
+
+// Redirect user to authUrl
+window.location.href = authUrl
+```
+
+### 2. Exchange Authorization Code
+
+After the user authorizes, GitHub redirects back with a `code` parameter. Exchange this code with the DEMOS node:
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk";
+
+const demos = new Demos();
+await demos.connect("https://demosnode.discus.sh");
+
+// Get the authorization code from the URL
+const urlParams = new URLSearchParams(window.location.search);
+const code = urlParams.get('code');
+
+// Exchange the code with the DEMOS node
+const response = await demos.nodeCall({
+    message: "exchangeGitHubOAuthCode",
+    data: { code }
+});
+
+console.log(response);
+```
+
+A successful response includes a signed attestation:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "success": true,
+    "userId": "12345678",
+    "username": "your_github_username",
+    "signedAttestation": {
+      "attestation": {
+        "provider": "github",
+        "userId": "12345678",
+        "username": "your_github_username",
+        "timestamp": 1703001234567,
+        "nodePublicKey": "0x..."
+      },
+      "signature": "...",
+      "signatureType": "ed25519"
+    }
+  }
+}
+```
+
+### 3. Submit Identity Transaction
+
+Use the signed attestation to create an identity transaction:
+
+```typescript
+import { Identities } from "@kynesyslabs/demosdk/abstraction";
+
+await demos.connectWallet(mnemonic);
+
+const identities = new Identities();
+const validityData = await identities.addGithubIdentityFromOAuth(
+    demos,
+    response.response.signedAttestation
+);
+
+if (validityData.result === 200) {
+    const res = await demos.broadcast(validityData);
+    console.log(res);
+}
+```
+
+<Info>
+The OAuth attestation is time-limited (5 minutes) and signed by the verifying node, ensuring the identity verification is authentic and recent.
+</Info>
+
+---
+
+## Method 2: Gist-based Verification
+
+This method requires manually creating a public gist containing a cryptographic proof.
 
 ### 1. Connect your wallet
 
 ```typescript
-import { Demos } from "@kynesyslabs/demosdk";
+import { Demos } from "@kynesyslabs/demosdk/websdk";
 import { Identities } from "@kynesyslabs/demosdk/abstraction";
 
 // the DEMOS rpc
@@ -79,7 +185,9 @@ A successful transaction response should look like this:
 }
 ```
 
-### 4. Getting linked web2 accounts
+---
+
+## Getting linked web2 accounts
 
 After the confirmation block has been forged, you can retrieve all your linked accounts as shown:
 
@@ -106,7 +214,7 @@ The response should look like this:
 }
 ```
 
-### 5. Removing linked GitHub identity
+## Removing linked GitHub identity
 
 You can create a transaction to remove your linked GitHub account as shown:
 
@@ -139,3 +247,11 @@ A successful transaction response should look like this:
 }
 ```
 
+## Comparison of Methods
+
+| Feature | OAuth Flow | Gist-based |
+|---------|-----------|------------|
+| User Experience | Seamless, one-click | Manual gist creation |
+| Setup Required | OAuth app configuration | None |
+| Verification Speed | Instant | Requires gist fetch |
+| Best For | Production apps | Development/testing |
