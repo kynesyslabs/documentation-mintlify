@@ -8,6 +8,20 @@ icon: "ethereum"
 
 The Ethereum Virtual Machine (EVM) is the runtime environment for smart contracts in Ethereum. It's a fundamental part of the Ethereum network and is used by many other blockchain platforms that aim to provide Ethereum-like functionality. Our EVM SDK provides a simple interface to interact with EVM-compatible blockchains.
 
+### Supported Networks
+
+The EVM SDK supports multiple EVM-compatible networks:
+
+| Network | Mainnet | Testnet | Chain ID |
+|---------|---------|---------|----------|
+| **Ethereum** | `https://rpc.ankr.com/eth` | Sepolia: `https://ethereum-sepolia-rpc.publicnode.com` | 1 / 11155111 |
+| **Polygon** | `https://polygon-rpc.com` | Amoy: `https://rpc-amoy.polygon.technology` | 137 / 80002 |
+| **Arbitrum** | `https://arbitrum.llamarpc.com` | Sepolia: `https://sepolia-rollup.arbitrum.io/rpc` | 42161 / 421614 |
+| **Base** | `https://base.llamarpc.com` | Sepolia: `https://sepolia.base.org` | 8453 / 84532 |
+| **Avalanche** | `https://api.avax.network/ext/bc/C/rpc` | Fuji: `https://avalanche-fuji-c-chain.publicnode.com` | 43114 / 43113 |
+| **BSC** | `https://bsc-dataseed1.defibit.io` | Testnet: `https://data-seed-prebsc-2-s2.bnbchain.org:8545` | 56 / 97 |
+| **Linea** | `https://rpc.linea.build` | Goerli: `https://rpc.goerli.linea.build` | 59144 / 59140 |
+
 ### Core Concepts
 
 1. [Accounts](https://ethereum.org/en/developers/docs/accounts/): Ethereum addresses that can hold balance and send transactions
@@ -19,10 +33,20 @@ The Ethereum Virtual Machine (EVM) is the runtime environment for smart contract
 
 To interact with EVM-compatible chains, you'll need a wallet with a private key. You can use tools like MetaMask or hardware wallets to generate and manage your keys securely.
 
-For testing purposes, you can use faucets to get testnet tokens. For example, for Sepolia testnet:
+For testing purposes, you can use faucets to get testnet tokens:
 
+**Ethereum Sepolia:**
 * [Alchemy Sepolia Faucet](https://sepoliafaucet.com/)
 * [Chainlink Sepolia Faucet](https://faucets.chain.link/sepolia)
+
+**Polygon Amoy:**
+* [Polygon Faucet](https://faucet.polygon.technology/)
+
+**Arbitrum Sepolia:**
+* [Arbitrum Faucet](https://faucet.arbitrum.io/)
+
+**Base Sepolia:**
+* [Base Faucet](https://www.alchemy.com/faucets/base-sepolia)
 
 ### Initialization
 
