@@ -122,19 +122,29 @@
             "pages": [
               "sdk/cross-chain/overview",
               "sdk/cross-chain/general-layout-of-the-xm-sdks",
-              "sdk/cross-chain/evm",
-              "sdk/cross-chain/btc",
-              "sdk/cross-chain/solana",
-              "sdk/cross-chain/aptos",
-              "sdk/cross-chain/multiversx-egld",
-              "sdk/cross-chain/near",
-              "sdk/cross-chain/ibc",
-              "sdk/cross-chain/ton",
-              "sdk/cross-chain/xrpl",
-              "sdk/cross-chain/ten",
-              "sdk/cross-chain/the-xmscript",
-              "sdk/cross-chain/identities",
-              "sdk/cross-chain/unstoppable-domains"
+              {
+                "group": "Blockchain Networks",
+                "pages": [
+                  "sdk/cross-chain/evm",
+                  "sdk/cross-chain/btc",
+                  "sdk/cross-chain/solana",
+                  "sdk/cross-chain/aptos",
+                  "sdk/cross-chain/multiversx-egld",
+                  "sdk/cross-chain/near",
+                  "sdk/cross-chain/ton",
+                  "sdk/cross-chain/xrpl",
+                  "sdk/cross-chain/ten",
+                  "sdk/cross-chain/ibc"
+                ]
+              },
+              {
+                "group": "Identity & Domains",
+                "pages": [
+                  "sdk/cross-chain/identities",
+                  "sdk/cross-chain/unstoppable-domains",
+                  "sdk/cross-chain/the-xmscript"
+                ]
+              }
             ]
           },
           {
