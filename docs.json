@@ -249,6 +249,15 @@
               "sdk/post-quantum-cryptography",
               "sdk/changelog"
             ]
+          },
+          {
+            "group": "Wallet Integration",
+            "icon": "wallet",
+            "pages": [
+              "frontend/demos-providers-discovery-mechanism",
+              "frontend/demos-wallet-provider-api/overview",
+              "frontend/demos-wallet-provider-api/wallet-provider-api-methods"
+            ]
           }
         ]
       },
@@ -337,20 +346,6 @@
               "backend/miscellaneous/browsing-the-postgres-db-via-psql",
               "backend/miscellaneous/backing-up-and-restoring-a-node",
               "backend/miscellaneous/joining-the-testnet-using-a-custom-genesis"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Frontend",
-        "groups": [
-          {
-            "group": "Wallet Provider",
-            "icon": "wallet",
-            "pages": [
-              "frontend/demos-providers-discovery-mechanism",
-              "frontend/demos-wallet-provider-api/overview",
-              "frontend/demos-wallet-provider-api/wallet-provider-api-methods"
             ]
           }
         ]
