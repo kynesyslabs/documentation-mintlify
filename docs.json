@@ -216,6 +216,7 @@
                   "sdk/web2/identities/overview",
                   "sdk/web2/identities/twitter",
                   "sdk/web2/identities/github",
+                  "sdk/web2/identities/discord",
                   "sdk/web2/identities/telegram"
                 ]
               }

@@ -1,0 +1,154 @@
+---
+title: "Discord"
+description: "You can associate your Discord account with your DEMOS address by following these steps:"
+icon: "discord"
+---
+
+# Discord
+
+You can associate your Discord account with your DEMOS address by following these steps:
+
+### 1. Connect your wallet
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { Identities } from "@kynesyslabs/demosdk/abstraction";
+
+// the DEMOS rpc
+const rpc = "https://demosnode.discus.sh"
+
+const demos = new Demos();
+await demos.connect(rpc);
+await demos.connectWallet(mnemonic);
+```
+
+### 2. Generate the Proof Payload
+
+To link your Discord account to your DEMOS address, you need to post a message containing a proof in a Discord channel. The proof is a string that contains a message, a signature and your public key.
+
+You can generate a proof as shown below:
+
+```typescript
+const identities = new Identities();
+
+const proofPayload = await identities.createWeb2ProofPayload(demos)
+console.log("Post this in Discord:", proofPayload)
+```
+
+The proof looks like this:
+
+```
+demos:dw2p:ed25519:e9dd684a031e142ce312b695275b226ab8824f2fd3674db52f28be6c3e9fe027f88a8a9509563....
+```
+
+Post this proof as a message in a Discord server where the DEMOS verification bot has access.
+
+<Info>
+The Discord message must be publicly accessible by the DEMOS network bot. Make sure you post in a channel where the bot can read messages.
+</Info>
+
+### 3. Send an Identity request
+
+After posting the proof message, copy the Discord message URL and use it to create an identity transaction as shown below:
+
+To get the message URL in Discord:
+1. Right-click on your message
+2. Select "Copy Message Link"
+
+The URL format should look like: `https://discord.com/channels/{guildId}/{channelId}/{messageId}`
+
+```typescript
+const proof = "https://discord.com/channels/123456789/987654321/111222333444"
+
+const validityData = await identities.addDiscordIdentity(demos, proof)
+console.log("validity data: ", validityData)
+
+if (validityData.result == 200){
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Verified discord proof. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 15
+  }
+}
+```
+
+### 4. Getting linked web2 accounts
+
+After the confirmation block has been forged, you can retrieve all your linked accounts as shown:
+
+```typescript
+const web2Ids = await identities.getWeb2Identities()
+```
+
+The response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "discord": [
+      {
+        "proof": "https://discord.com/channels/123456789/987654321/111222333444",
+        "username": "your_discord_username",
+        "proofHash": "a1b2c3d4e5f6..."
+      }
+    ]
+  },
+  "require_reply": false,
+  "extra": null
+}
+```
+
+### 5. Removing Discord identity
+
+You can create a transaction to remove your linked Discord account as shown:
+
+```typescript
+const payload = {
+    context: "discord",
+    username: "your_discord_username"
+}
+
+const validityData = await identities.removeWeb2Identity(demos, payload);
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData);
+    console.log(res);
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Identity removed. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 20
+  }
+}
+```
+
+### Supported URL Formats
+
+The following Discord URL formats are supported:
+
+1. Standard message URL: `https://discord.com/channels/{guildId}/{channelId}/{messageId}`
+2. PTB (Public Test Build): `https://ptb.discord.com/channels/{guildId}/{channelId}/{messageId}`
+3. Canary: `https://canary.discord.com/channels/{guildId}/{channelId}/{messageId}`
+4. Legacy domain: `https://discordapp.com/channels/{guildId}/{channelId}/{messageId}`
