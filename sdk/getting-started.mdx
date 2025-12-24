@@ -10,8 +10,12 @@ icon: "circle-play"
 
 Install the latest version of the SDK with:
 
+<Tip>
+**Recommended**: We strongly recommend using [bun](https://bun.sh) as your package manager. All examples are tested with bun.
+</Tip>
+
 ```bash
-yarn add @kynesyslabs/demosdk@2.2.35
+bun add @kynesyslabs/demosdk@latest
 ```
 
 ### Polyfills
@@ -21,7 +25,7 @@ When working on a browser environment, you need to configure polyfills for `Buff
 For a Vite project, this can be done using the [vite-plugin-node-polyfills](https://www.npmjs.com/package/vite-plugin-node-polyfills) plugin.
 
 ```bash
-yarn add --dev vite-plugin-node-polyfills
+bun add --dev vite-plugin-node-polyfills
 ```
 
 Then update your `vite.config.ts` to register the plugin and select polyfills.
