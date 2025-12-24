@@ -1,10 +1,73 @@
 ---
 title: "Changelog"
-description: "The SDK with the HTTP rewrite of the `demos` object is published at [@kynesyslabs/demosdk-http](https://www.npmjs.com/package/@kynesyslabs/demosdk-htt..."
+description: "Track the latest updates, improvements, and new features in the DEMOS SDK."
 icon: "clock-rotate-left"
 ---
 
 # Changelog
+
+## December 2024 Updates
+
+_December 2024_
+
+### New Chain Support
+
+Several new blockchain networks have been added to the cross-chain SDK:
+
+#### NEAR Protocol
+Full support for NEAR blockchain including:
+- Token transfers with `preparePay` and `preparePays`
+- Account creation and deletion
+- Message signing and verification
+- See [NEAR documentation](/sdk/cross-chain/near) for details
+
+#### Cosmos Hub (ATOM)
+IBC-compatible Cosmos Hub support:
+- Native ATOM transfers via IBC SDK
+- Uses existing IBC infrastructure with Cosmos-specific configuration
+- Testnet: `rpc.provider-sentry-01.ics-testnet.polypore.xyz`
+- Mainnet: `cosmos-rpc.publicnode.com`
+
+#### Bitcoin (BTC)
+SegWit (P2WPKH) Bitcoin support:
+- Native BTC transfers
+- UTXO management and balance checking
+- See [BTC documentation](/sdk/cross-chain/btc) for details
+
+#### Polygon (Amoy Testnet)
+EVM-compatible Polygon support:
+- Polygon Amoy testnet for development
+- Polygon mainnet support
+- Chain ID: 137 (mainnet), 80002 (Amoy)
+
+#### XRP Ledger Send Functionality
+Enhanced XRPL support with full send capabilities:
+- Token transfers via `preparePay`
+- Multiple transfer support via `preparePays`
+- See [XRPL documentation](/sdk/cross-chain/xrpl) for details
+
+### Identity Verification Updates
+
+#### GitHub OAuth Flow
+New OAuth-based identity verification for GitHub:
+- Seamless one-click authentication
+- Node-signed attestations with 5-minute validity
+- Complementary to existing gist-based verification
+- See [GitHub identity documentation](/sdk/web2/identities/github) for details
+
+#### Discord Identity Support
+Full Discord identity verification:
+- Message-based proof verification
+- Support for all Discord domains (standard, PTB, Canary, legacy)
+- See [Discord identity documentation](/sdk/web2/identities/discord) for details
+
+### Infrastructure Improvements
+
+- Improved error handling in multichain executors
+- Enhanced logging with log rotation support
+- Node diagnostic tooling (`node-doctor`)
+
+---
 
 ## The HTTP Rewrite
 
