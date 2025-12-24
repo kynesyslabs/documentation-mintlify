@@ -12,11 +12,11 @@ Storage Programs are a powerful key-value storage solution built into the Demos 
 
 ## Quick Links
 
-- [Getting Started](./getting-started.md)
-- [Operations Guide](./operations.md)
-- [Access Control](./access-control.md)
-- [RPC Queries](./rpc-queries.md)
-- [API Reference](./api-reference.md)
+- [Getting Started](./getting-started)
+- [Operations Guide](./operations)
+- [Access Control](./access-control)
+- [RPC Queries](./rpc-queries)
+- [API Reference](./api-reference)
 - [Cookbook Recipes](/sdk/cookbook/storage-programs/overview)
 - [Backend Architecture](/backend/storage-programs/overview)
 
@@ -32,7 +32,7 @@ A Storage Program is a deterministic storage container that allows you to:
 
 ## Key Features
 
-- **Flexible access control**: Four modes cover private, collaborative, and public scenarios. See the [Access Control guide](./access-control.md) for details.
+- **Flexible access control**: Four modes cover private, collaborative, and public scenarios. See the [Access Control guide](./access-control) for details.
 - **Deterministic addressing**: `stor-` identifiers are derived from deployer inputs, so clients can pre-compute addresses before deployment.
 - **Consensus-backed writes**: Mutations are validated via consensus while reads are served instantly over RPC.
 - **Developer-friendly API**: High-level SDK helpers plus raw RPC endpoints give you control at the right abstraction.
@@ -98,7 +98,7 @@ Storage Programs are stored in the `GCR_Main` table's `data` column (JSONB):
 
 ## Use Cases
 
-Looking for implementation-ready patterns? Jump to the [Storage Program Cookbook](../cookbook/storage-programs/examples.md) for end-to-end recipes covering announcements, team workspaces, user profiles, and more. This overview keeps the focus on concepts so each scenario has a single canonical home.
+Looking for implementation-ready patterns? Jump to the [Storage Program Cookbook](../cookbook/storage-programs/examples) for end-to-end recipes covering announcements, team workspaces, user profiles, and more. This overview keeps the focus on concepts so each scenario has a single canonical home.
 
 ## Core Concepts
 
@@ -131,7 +131,7 @@ const address = deriveStorageAddress(
 
 ### Access Control Modes
 
-Each program chooses one of four modes (private, deployer-only, restricted, public). Rather than duplicating the full matrix here, see the [Access Control guide](./access-control.md) for the authoritative table, example flows, and security checklists.
+Each program chooses one of four modes (private, deployer-only, restricted, public). Rather than duplicating the full matrix here, see the [Access Control guide](./access-control) for the authoritative table, example flows, and security checklists.
 
 ### Storage Limits
 
@@ -201,13 +201,13 @@ const size = new TextEncoder().encode(JSON.stringify(data)).length
 
 ## Getting Started
 
-Ready to build with Storage Programs? Head to the [Getting Started](./getting-started.md) guide for your first Storage Program.
+Ready to build with Storage Programs? Head to the [Getting Started](./getting-started) guide for your first Storage Program.
 
 ## Next Steps
 
-- [Getting Started](./getting-started.md) – create your first Storage Program
-- [Operations](./operations.md) – explore CRUD and access updates
-- [Access Control](./access-control.md) – configure permissions safely
-- [RPC Queries](./rpc-queries.md) – build fast read paths
-- [Cookbook Recipes](../cookbook/storage-programs/examples.md) – apply patterns in real apps
-- [API Reference](./api-reference.md) – look up method signatures
+- [Getting Started](./getting-started) – create your first Storage Program
+- [Operations](./operations) – explore CRUD and access updates
+- [Access Control](./access-control) – configure permissions safely
+- [RPC Queries](./rpc-queries) – build fast read paths
+- [Cookbook Recipes](../cookbook/storage-programs/examples) – apply patterns in real apps
+- [API Reference](./api-reference) – look up method signatures

@@ -6,7 +6,7 @@ description: "This guide explains how each Storage Program operation fits into a
 
 > **Warning**: Storage Programs are still being developed; this documentation is a preview and might not work correctly.
 
-This guide explains how each Storage Program operation fits into an end-to-end workflow. For method signatures, payload schemas, and error codes, rely on the [API Reference](./api-reference.md). For concrete implementation patterns, see the [Storage Program Cookbook](../cookbook/storage-programs/examples.md).
+This guide explains how each Storage Program operation fits into an end-to-end workflow. For method signatures, payload schemas, and error codes, rely on the [API Reference](./api-reference). For concrete implementation patterns, see the [Storage Program Cookbook](../cookbook/storage-programs/examples).
 
 ## Operation Overview
 
@@ -32,7 +32,7 @@ This guide explains how each Storage Program operation fits into an end-to-end w
 - Restricted mode must include at least one allowlisted address.
 - Decide whether to encrypt sensitive fields up front; the network stores JSON as-is.
 
-**References**: [API Reference – create](./api-reference.md#sdk-methods), [Cookbook – provisioning flows](../cookbook/storage-programs/examples.md).
+**References**: [API Reference – create](./api-reference.md#sdk-methods), [Cookbook – provisioning flows](../cookbook/storage-programs/examples).
 
 ## Write
 
@@ -49,7 +49,7 @@ This guide explains how each Storage Program operation fits into an end-to-end w
 - Callers must satisfy access control (deployer or allowlisted address).
 - Consider optimistic UI updates paired with a rollback path for failures.
 
-**References**: [API Reference – write](./api-reference.md#sdk-methods), [Cookbook – update patterns](../cookbook/storage-programs/examples.md).
+**References**: [API Reference – write](./api-reference.md#sdk-methods), [Cookbook – update patterns](../cookbook/storage-programs/examples).
 
 ## Read
 
@@ -64,7 +64,7 @@ This guide explains how each Storage Program operation fits into an end-to-end w
 - Ensure the caller has read permission under the current access mode.
 - Treat responses as eventually consistent; pair with webhooks/polling if you need freshness.
 
-**References**: [RPC Queries guide](./rpc-queries.md), [API Reference – read](./api-reference.md#sdk-methods).
+**References**: [RPC Queries guide](./rpc-queries), [API Reference – read](./api-reference.md#sdk-methods).
 
 ## Update Access Control
 
@@ -83,7 +83,7 @@ This guide explains how each Storage Program operation fits into an end-to-end w
 - Restricted mode requires a non-empty allowlist.
 - When opening data (restricted → public), review contents to avoid leaking secrets.
 
-**References**: [Access Control guide](./access-control.md), [API Reference – updateAccessControl](./api-reference.md#sdk-methods).
+**References**: [Access Control guide](./access-control), [API Reference – updateAccessControl](./api-reference.md#sdk-methods).
 
 ## Delete
 
@@ -98,4 +98,4 @@ This guide explains how each Storage Program operation fits into an end-to-end w
 - Only the deployer can delete.
 - Communicate the removal to collaborators or users to prevent dangling references.
 
-**References**: [API Reference – delete](./api-reference.md#sdk-methods), [Cookbook – teardown routines](../cookbook/storage-programs/examples.md).
+**References**: [API Reference – delete](./api-reference.md#sdk-methods), [Cookbook – teardown routines](../cookbook/storage-programs/examples).
