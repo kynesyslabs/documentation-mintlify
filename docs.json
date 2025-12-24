@@ -158,7 +158,7 @@
             ]
           },
           {
-            "group": "SDK Cookbook",
+            "group": "Code Examples",
             "icon": "book-open",
             "pages": [
               "sdk/cookbook/overview",
