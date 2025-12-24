@@ -24,7 +24,8 @@
             "pages": [
               "introduction/overview",
               "introduction/what-is-demos-network",
-              "introduction/demos-network-architecture"
+              "introduction/demos-network-architecture",
+              "introduction/quick-start"
             ]
           },
           {
