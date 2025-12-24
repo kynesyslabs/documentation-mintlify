@@ -133,7 +133,8 @@
               "sdk/cross-chain/xrpl",
               "sdk/cross-chain/ten",
               "sdk/cross-chain/the-xmscript",
-              "sdk/cross-chain/identities"
+              "sdk/cross-chain/identities",
+              "sdk/cross-chain/unstoppable-domains"
             ]
           },
           {
