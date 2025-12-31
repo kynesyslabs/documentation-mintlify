@@ -214,6 +214,7 @@
             "pages": [
               "sdk/web2/overview",
               "sdk/web2/quick-start",
+              "sdk/web2/keyserver-oauth",
               {
                 "group": "DAHR API Reference",
                 "pages": [

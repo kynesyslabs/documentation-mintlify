@@ -1,0 +1,354 @@
+---
+title: "Key Server OAuth"
+description: "Verify user ownership of GitHub and Discord accounts with DAHR attestation using the KeyServerClient."
+icon: "key"
+---
+
+# Key Server OAuth
+
+The `KeyServerClient` enables dApps to verify user ownership of GitHub and Discord accounts through the Key Server OAuth flow. Each successful verification produces a **DAHR (Demos Attestation Hash Response)** attestation - a cryptographic proof that the Key Server performed the verification.
+
+## Installation
+
+The KeyServerClient is included in the SDK:
+
+```bash
+npm install @kynesyslabs/demosdk
+# or
+bun add @kynesyslabs/demosdk
+```
+
+## Quick Start
+
+```typescript
+import { KeyServerClient } from "@kynesyslabs/demosdk/keyserver";
+
+const client = new KeyServerClient({
+    endpoint: "http://localhost:3030",  // Node RPC endpoint
+    nodePubKey: "abc123...",            // Node's Ed25519 public key
+});
+
+// Complete OAuth verification
+const result = await client.verifyOAuth("github", {
+    onAuthUrl: (url) => window.open(url),
+});
+
+console.log("Verified user:", result.user.username);
+console.log("Provider ID:", result.user.providerId);
+```
+
+---
+
+## API Reference
+
+### KeyServerClient
+
+#### Constructor
+
+```typescript
+const client = new KeyServerClient({
+    endpoint: string;    // Key Server endpoint URL
+    nodePubKey: string;  // Node's Ed25519 public key (hex)
+});
+```
+
+#### getProviders()
+
+Get list of available OAuth providers.
+
+```typescript
+const providers = await client.getProviders();
+// Returns: ["github", "discord"]
+```
+
+#### initiateOAuth()
+
+Start an OAuth flow and get the authorization URL.
+
+```typescript
+const result = await client.initiateOAuth("github", {
+    scopes?: string[];   // Optional custom scopes
+    timeout?: number;    // Flow timeout in ms (default: 600000)
+});
+
+// Returns:
+// {
+//   success: true,
+//   authUrl: "https://github.com/login/oauth/authorize?...",
+//   state: "abc123",
+//   expiresAt: 1703001234567
+// }
+```
+
+#### pollOAuth()
+
+Check the status of an OAuth flow.
+
+```typescript
+const result = await client.pollOAuth(state);
+
+// Returns:
+// {
+//   success: true,
+//   status: "pending" | "completed" | "failed" | "expired",
+//   result?: OAuthUserInfo,      // Present when completed
+//   attestation?: DAHRAttestation, // Present when completed
+//   error?: { code, message }    // Present when failed
+// }
+```
+
+#### verifyOAuth()
+
+Complete OAuth flow with automatic polling (recommended).
+
+```typescript
+const result = await client.verifyOAuth("github", {
+    onAuthUrl: (url, state) => {
+        // Display URL to user (e.g., open popup, show QR code)
+        window.open(url);
+    },
+    onPoll: (attempt, status) => {
+        // Optional: Show polling progress
+        console.log(`Attempt ${attempt}: ${status}`);
+    },
+    timeout: 300000,      // 5 minutes (default: 600000)
+    pollInterval: 2000,   // 2 seconds (default: 2000)
+    scopes: ["user:email"], // Optional custom scopes
+});
+
+// Returns:
+// {
+//   success: true,
+//   user: OAuthUserInfo,
+//   attestation: DAHRAttestation
+// }
+```
+
+---
+
+## Types
+
+### OAuthUserInfo
+
+User identity information from OAuth provider.
+
+```typescript
+interface OAuthUserInfo {
+    service: "github" | "discord";
+    providerId: string;      // Provider's user ID
+    username: string;        // Provider's username
+    email?: string;          // If email scope was requested
+    avatarUrl?: string;      // User avatar URL
+    verifiedAt: number;      // Unix timestamp
+}
+```
+
+### DAHRAttestation
+
+Cryptographic proof of verification.
+
+```typescript
+interface DAHRAttestation {
+    requestHash: string;     // SHA256 of request payload
+    responseHash: string;    // SHA256 of response payload
+    signature: {
+        type: "Ed25519";
+        data: string;        // Hex-encoded signature
+    };
+    metadata: {
+        sessionId: string;
+        timestamp: number;
+        keyServerPubKey: string;
+        nodePubKey: string;
+        version: string;
+    };
+}
+```
+
+---
+
+## Attestation Verification
+
+You can cryptographically verify that the Key Server actually signed the attestation:
+
+```typescript
+import {
+    KeyServerClient,
+    verifyOAuthAttestation
+} from "@kynesyslabs/demosdk/keyserver";
+
+const result = await client.verifyOAuth("github", { ... });
+
+// Verify the attestation
+const verification = verifyOAuthAttestation(
+    result,
+    KNOWN_KEY_SERVER_PUBKEY,  // Expected Key Server public key
+    {
+        maxAge: 3600000,         // Optional: max attestation age (default: 1 hour)
+        expectedNodePubKey: "...", // Optional: validate specific node
+    }
+);
+
+if (!verification.valid) {
+    console.error("Invalid attestation:", verification.reason);
+}
+```
+
+### Verification Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxAge` | number | 3600000 | Max attestation age in ms. Set to 0 to disable. |
+| `expectedNodePubKey` | string | - | Validate the attestation came from a specific node |
+
+---
+
+## Error Handling
+
+The client throws `OAuthError` for all OAuth-related errors:
+
+```typescript
+import { KeyServerClient, OAuthError } from "@kynesyslabs/demosdk/keyserver";
+
+try {
+    const result = await client.verifyOAuth("github", { ... });
+} catch (error) {
+    if (error instanceof OAuthError) {
+        switch (error.code) {
+            case "OAUTH_DENIED":
+                console.log("User denied access");
+                break;
+            case "OAUTH_EXPIRED":
+                console.log("OAuth flow expired");
+                break;
+            case "OAUTH_TIMEOUT":
+                console.log("Polling timed out");
+                break;
+            case "NETWORK_ERROR":
+                console.log("Network error:", error.message);
+                break;
+            default:
+                console.log(`Error [${error.code}]: ${error.message}`);
+        }
+    }
+}
+```
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| `OAUTH_INVALID_SERVICE` | Invalid OAuth provider specified |
+| `OAUTH_NOT_CONFIGURED` | OAuth not configured on server |
+| `OAUTH_NOT_AVAILABLE` | OAuth service unavailable |
+| `OAUTH_DENIED` | User denied authorization |
+| `OAUTH_EXPIRED` | OAuth flow expired |
+| `OAUTH_PROVIDER_ERROR` | Error from OAuth provider |
+| `OAUTH_STATE_NOT_FOUND` | Invalid or expired state |
+| `OAUTH_STATE_MISMATCH` | State parameter mismatch |
+| `OAUTH_TIMEOUT` | Polling timed out |
+| `NETWORK_ERROR` | Network connection error |
+| `INTERNAL_ERROR` | Internal server error |
+
+---
+
+## Full Example
+
+Complete example with UI feedback:
+
+```typescript
+import {
+    KeyServerClient,
+    OAuthError,
+    verifyOAuthAttestation
+} from "@kynesyslabs/demosdk/keyserver";
+
+const KEY_SERVER_PUBKEY = "your_key_server_public_key_hex";
+
+async function verifyGitHubAccount() {
+    const client = new KeyServerClient({
+        endpoint: "http://localhost:3030",
+        nodePubKey: "your_node_public_key_hex",
+    });
+
+    try {
+        // Check available providers
+        const providers = await client.getProviders();
+        console.log("Available providers:", providers);
+
+        // Start verification
+        const result = await client.verifyOAuth("github", {
+            onAuthUrl: (url, state) => {
+                // Open GitHub auth in popup
+                const popup = window.open(url, "github-oauth", "width=600,height=700");
+
+                // Store state for CSRF protection
+                sessionStorage.setItem("oauth_state", state);
+            },
+            onPoll: (attempt, status) => {
+                // Update UI with progress
+                document.getElementById("status").textContent =
+                    `Waiting for authorization... (${status})`;
+            },
+            timeout: 300000, // 5 minutes
+        });
+
+        // Verify attestation cryptographically
+        const verification = verifyOAuthAttestation(result, KEY_SERVER_PUBKEY);
+
+        if (!verification.valid) {
+            throw new Error(`Attestation invalid: ${verification.reason}`);
+        }
+
+        // Success!
+        console.log("Verified user:", result.user.username);
+        console.log("Provider ID:", result.user.providerId);
+        console.log("Attestation valid:", verification.valid);
+
+        return result;
+
+    } catch (error) {
+        if (error instanceof OAuthError) {
+            if (error.code === "OAUTH_DENIED") {
+                alert("You denied access. Please try again.");
+            } else if (error.code === "OAUTH_TIMEOUT") {
+                alert("Verification timed out. Please try again.");
+            } else {
+                alert(`Verification failed: ${error.message}`);
+            }
+        }
+        throw error;
+    }
+}
+```
+
+---
+
+## Architecture
+
+The Key Server OAuth flow works as follows:
+
+```
+┌─────────┐     ┌──────────┐     ┌────────────┐     ┌──────────────┐
+│  dApp   │────▶│   SDK    │────▶│  Node RPC  │────▶│  Key Server  │
+│         │     │ (Client) │     │            │     │              │
+└─────────┘     └──────────┘     └────────────┘     └──────────────┘
+                                                           │
+                                                           ▼
+                                                    ┌──────────────┐
+                                                    │   GitHub /   │
+                                                    │   Discord    │
+                                                    └──────────────┘
+```
+
+1. **dApp** calls `KeyServerClient.verifyOAuth()`
+2. **SDK** sends request to **Node RPC**
+3. **Node** proxies to **Key Server** (same host)
+4. **Key Server** redirects user to **GitHub/Discord**
+5. User authorizes, Key Server receives callback
+6. Key Server creates **DAHR attestation**
+7. Attestation returned through the chain to dApp
+
+<Info>
+The Key Server and Node communicate on the same host, so no signatures are needed for this internal communication. The DAHR attestation provides cryptographic proof to external parties.
+</Info>

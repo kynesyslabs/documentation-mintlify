@@ -1,12 +1,112 @@
 ---
 title: "Discord"
-description: "You can associate your Discord account with your DEMOS address by following these steps:"
+description: "You can associate your Discord account with your DEMOS address using OAuth or message-based verification."
 icon: "discord"
 ---
 
 # Discord
 
-You can associate your Discord account with your DEMOS address by following these steps:
+You can associate your Discord account with your DEMOS address using one of two methods:
+
+1. **OAuth Flow** (Recommended) - Seamless authentication through the Key Server OAuth system
+2. **Message-based Verification** - Manual proof posting in a Discord channel
+
+---
+
+## Method 1: OAuth Flow (Recommended)
+
+The OAuth flow provides a seamless user experience by authenticating through the Key Server, which handles the Discord OAuth process and provides cryptographic attestation.
+
+<Info>
+For detailed information about the Key Server OAuth system, including attestation verification and error handling, see the [Key Server OAuth documentation](/sdk/web2/keyserver-oauth).
+</Info>
+
+### 1. Verify Discord Account Ownership
+
+Use the `KeyServerClient` to verify the user owns a Discord account:
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk";
+import { KeyServerClient } from "@kynesyslabs/demosdk/keyserver";
+
+const demos = new Demos();
+await demos.connect("https://node2.demos.sh");
+
+const client = new KeyServerClient({
+    endpoint: "https://node2.demos.sh",
+    nodePubKey: "node_public_key_hex",
+});
+
+// Complete OAuth verification
+const result = await client.verifyOAuth("discord", {
+    onAuthUrl: (url) => {
+        // Open Discord authorization in a popup
+        window.open(url, "discord-oauth", "width=600,height=700");
+    },
+    onPoll: (attempt, status) => {
+        console.log(`Verification status: ${status}`);
+    },
+    timeout: 300000, // 5 minutes
+});
+
+console.log("Verified user:", result.user.username);
+console.log("Provider ID:", result.user.providerId);
+```
+
+### 2. Submit Identity Transaction
+
+After successful verification, use the attestation to create an identity transaction:
+
+```typescript
+import { Identities } from "@kynesyslabs/demosdk/abstraction";
+
+await demos.connectWallet(mnemonic);
+
+const identities = new Identities();
+const validityData = await identities.addDiscordIdentityFromOAuth(
+    demos,
+    {
+        attestation: {
+            provider: "discord",
+            userId: result.user.providerId,
+            username: result.user.username,
+            timestamp: result.user.verifiedAt,
+            nodePublicKey: result.attestation.metadata.nodePubKey
+        },
+        signature: result.attestation.signature.data,
+        signatureType: "ed25519"
+    }
+);
+
+if (validityData.result === 200) {
+    const res = await demos.broadcast(validityData);
+    console.log(res);
+}
+```
+
+### 3. Verify Attestation (Optional)
+
+You can cryptographically verify the attestation before submitting:
+
+```typescript
+import { verifyOAuthAttestation } from "@kynesyslabs/demosdk/keyserver";
+
+const verification = verifyOAuthAttestation(result, KNOWN_KEY_SERVER_PUBKEY);
+
+if (!verification.valid) {
+    throw new Error(`Invalid attestation: ${verification.reason}`);
+}
+```
+
+<Info>
+The OAuth attestation is cryptographically signed by the Key Server, ensuring the identity verification is authentic. See [Attestation Verification](/sdk/web2/keyserver-oauth#attestation-verification) for details.
+</Info>
+
+---
+
+## Method 2: Message-based Verification
+
+This method requires manually posting a cryptographic proof in a Discord channel where the DEMOS bot has access.
 
 ### 1. Connect your wallet
 
@@ -84,7 +184,9 @@ A successful transaction response should look like this:
 }
 ```
 
-### 4. Getting linked web2 accounts
+---
+
+## Getting linked web2 accounts
 
 After the confirmation block has been forged, you can retrieve all your linked accounts as shown:
 
@@ -111,7 +213,7 @@ The response should look like this:
 }
 ```
 
-### 5. Removing Discord identity
+## Removing Discord identity
 
 You can create a transaction to remove your linked Discord account as shown:
 
@@ -144,11 +246,20 @@ A successful transaction response should look like this:
 }
 ```
 
-### Supported URL Formats
+## Supported URL Formats
 
-The following Discord URL formats are supported:
+The following Discord URL formats are supported for message-based verification:
 
 1. Standard message URL: `https://discord.com/channels/{guildId}/{channelId}/{messageId}`
 2. PTB (Public Test Build): `https://ptb.discord.com/channels/{guildId}/{channelId}/{messageId}`
 3. Canary: `https://canary.discord.com/channels/{guildId}/{channelId}/{messageId}`
 4. Legacy domain: `https://discordapp.com/channels/{guildId}/{channelId}/{messageId}`
+
+## Comparison of Methods
+
+| Feature | OAuth Flow | Message-based |
+|---------|-----------|---------------|
+| User Experience | Seamless, one-click | Manual message posting |
+| Cryptographic Attestation | DAHR attestation with signature | Proof in message |
+| Bot Requirement | Not required | Bot must be in server |
+| Best For | Production apps | Development/testing |

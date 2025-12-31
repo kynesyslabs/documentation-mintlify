@@ -8,84 +8,54 @@ icon: "github"
 
 You can associate your GitHub account with your DEMOS address using one of two methods:
 
-1. **OAuth Flow** (Recommended) - Seamless authentication through GitHub's OAuth
+1. **OAuth Flow** (Recommended) - Seamless authentication through the Key Server OAuth system
 2. **Gist-based Verification** - Manual proof creation via GitHub Gist
 
 ---
 
 ## Method 1: OAuth Flow (Recommended)
 
-The OAuth flow provides a seamless user experience by authenticating directly with GitHub.
+The OAuth flow provides a seamless user experience by authenticating through the Key Server, which handles the GitHub OAuth process and provides cryptographic attestation.
 
-### Prerequisites
+<Info>
+For detailed information about the Key Server OAuth system, including attestation verification and error handling, see the [Key Server OAuth documentation](/sdk/web2/keyserver-oauth).
+</Info>
 
-Your application needs to implement a GitHub OAuth flow. The DEMOS node will exchange the authorization code for user verification.
+### 1. Verify GitHub Account Ownership
 
-### 1. Initiate OAuth Flow
-
-Redirect users to GitHub's authorization endpoint:
-
-```typescript
-const clientId = "YOUR_GITHUB_CLIENT_ID"
-const redirectUri = encodeURIComponent("YOUR_CALLBACK_URL")
-const scope = "read:user"
-
-const authUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=${scope}`
-
-// Redirect user to authUrl
-window.location.href = authUrl
-```
-
-### 2. Exchange Authorization Code
-
-After the user authorizes, GitHub redirects back with a `code` parameter. Exchange this code with the DEMOS node:
+Use the `KeyServerClient` to verify the user owns a GitHub account:
 
 ```typescript
 import { Demos } from "@kynesyslabs/demosdk/websdk";
+import { KeyServerClient } from "@kynesyslabs/demosdk/keyserver";
 
 const demos = new Demos();
 await demos.connect("https://node2.demos.sh");
 
-// Get the authorization code from the URL
-const urlParams = new URLSearchParams(window.location.search);
-const code = urlParams.get('code');
-
-// Exchange the code with the DEMOS node
-const response = await demos.nodeCall({
-    message: "exchangeGitHubOAuthCode",
-    data: { code }
+const client = new KeyServerClient({
+    endpoint: "https://node2.demos.sh",
+    nodePubKey: "node_public_key_hex",
 });
 
-console.log(response);
+// Complete OAuth verification
+const result = await client.verifyOAuth("github", {
+    onAuthUrl: (url) => {
+        // Open GitHub authorization in a popup
+        window.open(url, "github-oauth", "width=600,height=700");
+    },
+    onPoll: (attempt, status) => {
+        console.log(`Verification status: ${status}`);
+    },
+    timeout: 300000, // 5 minutes
+});
+
+console.log("Verified user:", result.user.username);
+console.log("Provider ID:", result.user.providerId);
 ```
 
-A successful response includes a signed attestation:
+### 2. Submit Identity Transaction
 
-```json
-{
-  "result": 200,
-  "response": {
-    "success": true,
-    "userId": "12345678",
-    "username": "your_github_username",
-    "signedAttestation": {
-      "attestation": {
-        "provider": "github",
-        "userId": "12345678",
-        "username": "your_github_username",
-        "timestamp": 1703001234567,
-        "nodePublicKey": "0x..."
-      },
-      "signature": "...",
-      "signatureType": "ed25519"
-    }
-  }
-}
-```
-
-### 3. Submit Identity Transaction
-
-Use the signed attestation to create an identity transaction:
+After successful verification, use the attestation to create an identity transaction:
 
 ```typescript
 import { Identities } from "@kynesyslabs/demosdk/abstraction";
@@ -95,7 +65,17 @@ await demos.connectWallet(mnemonic);
 const identities = new Identities();
 const validityData = await identities.addGithubIdentityFromOAuth(
     demos,
-    response.response.signedAttestation
+    {
+        attestation: {
+            provider: "github",
+            userId: result.user.providerId,
+            username: result.user.username,
+            timestamp: result.user.verifiedAt,
+            nodePublicKey: result.attestation.metadata.nodePubKey
+        },
+        signature: result.attestation.signature.data,
+        signatureType: "ed25519"
+    }
 );
 
 if (validityData.result === 200) {
@@ -104,8 +84,22 @@ if (validityData.result === 200) {
 }
 ```
 
+### 3. Verify Attestation (Optional)
+
+You can cryptographically verify the attestation before submitting:
+
+```typescript
+import { verifyOAuthAttestation } from "@kynesyslabs/demosdk/keyserver";
+
+const verification = verifyOAuthAttestation(result, KNOWN_KEY_SERVER_PUBKEY);
+
+if (!verification.valid) {
+    throw new Error(`Invalid attestation: ${verification.reason}`);
+}
+```
+
 <Info>
-The OAuth attestation is time-limited (5 minutes) and signed by the verifying node, ensuring the identity verification is authentic and recent.
+The OAuth attestation is cryptographically signed by the Key Server, ensuring the identity verification is authentic. See [Attestation Verification](/sdk/web2/keyserver-oauth#attestation-verification) for details.
 </Info>
 
 ---
@@ -252,6 +246,6 @@ A successful transaction response should look like this:
 | Feature | OAuth Flow | Gist-based |
 |---------|-----------|------------|
 | User Experience | Seamless, one-click | Manual gist creation |
-| Setup Required | OAuth app configuration | None |
+| Cryptographic Attestation | DAHR attestation with signature | Proof in gist |
 | Verification Speed | Instant | Requires gist fetch |
 | Best For | Production apps | Development/testing |
