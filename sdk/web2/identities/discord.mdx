@@ -37,7 +37,7 @@ const client = new KeyServerClient({
     nodePubKey: "node_public_key_hex",
 });
 
-// Complete OAuth verification
+// Complete OAuth verification with optional wallet binding
 const result = await client.verifyOAuth("discord", {
     onAuthUrl: (url) => {
         // Open Discord authorization in a popup
@@ -47,6 +47,12 @@ const result = await client.verifyOAuth("discord", {
         console.log(`Verification status: ${status}`);
     },
     timeout: 300000, // 5 minutes
+    // Optional: Bind wallet address to this verification for sybil resistance
+    walletBinding: async (state) => {
+        const message = `demos-oauth-bind:${state}`;
+        const signature = await wallet.signMessage(message);
+        return { address: wallet.address, signature, signatureType: "evm" };
+    },
 });
 
 console.log("Verified user:", result.user.username);
@@ -101,6 +107,10 @@ if (!verification.valid) {
 <Info>
 The OAuth attestation is cryptographically signed by the Key Server, ensuring the identity verification is authentic. See [Attestation Verification](/sdk/web2/keyserver-oauth#attestation-verification) for details.
 </Info>
+
+<Tip>
+Use [Wallet Binding](/sdk/web2/keyserver-oauth#wallet-binding) to cryptographically link the OAuth identity to a specific wallet address. This provides sybil resistance by proving the user owns both the social account and the wallet.
+</Tip>
 
 ---
 

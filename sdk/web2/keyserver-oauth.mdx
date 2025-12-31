@@ -47,8 +47,9 @@ console.log("Provider ID:", result.user.providerId);
 
 ```typescript
 const client = new KeyServerClient({
-    endpoint: string;    // Key Server endpoint URL
-    nodePubKey: string;  // Node's Ed25519 public key (hex)
+    endpoint: string;           // Key Server endpoint URL
+    nodePubKey: string;         // Node's Ed25519 public key (hex)
+    defaultWalletAddress?: string; // Optional default wallet for binding
 });
 ```
 
@@ -85,7 +86,11 @@ const result = await client.initiateOAuth("github", {
 Check the status of an OAuth flow.
 
 ```typescript
-const result = await client.pollOAuth(state);
+const result = await client.pollOAuth(state, walletBinding?);
+
+// Parameters:
+// - state: string - State identifier from initiateOAuth
+// - walletBinding?: WalletBinding - Optional wallet binding with signature
 
 // Returns:
 // {
@@ -114,6 +119,12 @@ const result = await client.verifyOAuth("github", {
     timeout: 300000,      // 5 minutes (default: 600000)
     pollInterval: 2000,   // 2 seconds (default: 2000)
     scopes: ["user:email"], // Optional custom scopes
+    walletBinding: async (state) => {
+        // Optional: Bind a wallet address to this verification
+        const message = `demos-oauth-bind:${state}`;
+        const signature = await wallet.signMessage(message);
+        return { address: wallet.address, signature, signatureType: "evm" };
+    },
 });
 
 // Returns:
@@ -143,6 +154,20 @@ interface OAuthUserInfo {
 }
 ```
 
+### WalletBinding
+
+Wallet binding for proving ownership during OAuth verification.
+
+```typescript
+interface WalletBinding {
+    address: string;           // Wallet address to bind
+    signature: string;         // Signature proving ownership
+    signatureType: "evm" | "solana" | "ed25519";  // Signature scheme
+}
+```
+
+The message to sign is: `demos-oauth-bind:{state}` where `state` is from `initiateOAuth()`.
+
 ### DAHRAttestation
 
 Cryptographic proof of verification.
@@ -161,6 +186,7 @@ interface DAHRAttestation {
         keyServerPubKey: string;
         nodePubKey: string;
         version: string;
+        walletBinding?: WalletBinding;  // Present if wallet was bound
     };
 }
 ```
@@ -252,9 +278,73 @@ try {
 
 ---
 
+## Wallet Binding
+
+Wallet binding allows you to cryptographically prove ownership of a blockchain wallet during OAuth verification. The wallet address and signature are included in the DAHR attestation, creating a verifiable link between the OAuth identity and the wallet.
+
+### Why Use Wallet Binding?
+
+- **Sybil Resistance**: Link social accounts to wallets to prevent one person from claiming multiple identities
+- **Access Control**: Gate access based on both wallet and verified social identity
+- **Attestation Integrity**: The wallet binding is part of the signed attestation, tamper-proof
+
+### How It Works
+
+1. User initiates OAuth flow
+2. dApp receives the `state` parameter in `onAuthUrl` callback
+3. User signs message `demos-oauth-bind:{state}` with their wallet
+4. Signature is sent with subsequent poll requests
+5. Key Server verifies the signature and includes binding in attestation
+
+### Usage
+
+You can provide wallet binding as a function that receives the state:
+
+```typescript
+const result = await client.verifyOAuth("github", {
+    onAuthUrl: (url) => window.open(url),
+    walletBinding: async (state) => {
+        // Sign with user's connected wallet
+        const message = `demos-oauth-bind:${state}`;
+        const signature = await wallet.signMessage(message);
+        return {
+            address: wallet.address,
+            signature,
+            signatureType: "evm"  // or "solana", "ed25519"
+        };
+    },
+});
+
+// The attestation now includes the wallet binding
+console.log("Bound wallet:", result.attestation.metadata.walletBinding?.address);
+```
+
+Or provide a pre-computed binding (if state is known ahead of time):
+
+```typescript
+const result = await client.verifyOAuth("github", {
+    onAuthUrl: (url) => window.open(url),
+    walletBinding: {
+        address: "0x123...",
+        signature: "0xabc...",
+        signatureType: "evm"
+    },
+});
+```
+
+### Supported Signature Types
+
+| Type | Description | Message Format |
+|------|-------------|----------------|
+| `evm` | Ethereum/EVM `personal_sign` or `eth_sign` | UTF-8 string |
+| `solana` | Solana `signMessage` | UTF-8 bytes |
+| `ed25519` | Raw Ed25519 signature | UTF-8 bytes |
+
+---
+
 ## Full Example
 
-Complete example with UI feedback:
+Complete example with UI feedback and wallet binding:
 
 ```typescript
 import {
@@ -265,7 +355,7 @@ import {
 
 const KEY_SERVER_PUBKEY = "your_key_server_public_key_hex";
 
-async function verifyGitHubAccount() {
+async function verifyGitHubAccount(wallet: { address: string; signMessage: (msg: string) => Promise<string> }) {
     const client = new KeyServerClient({
         endpoint: "http://localhost:3030",
         nodePubKey: "your_node_public_key_hex",
@@ -276,7 +366,7 @@ async function verifyGitHubAccount() {
         const providers = await client.getProviders();
         console.log("Available providers:", providers);
 
-        // Start verification
+        // Start verification with wallet binding
         const result = await client.verifyOAuth("github", {
             onAuthUrl: (url, state) => {
                 // Open GitHub auth in popup
@@ -291,6 +381,16 @@ async function verifyGitHubAccount() {
                     `Waiting for authorization... (${status})`;
             },
             timeout: 300000, // 5 minutes
+            // Bind wallet to this OAuth verification
+            walletBinding: async (state) => {
+                const message = `demos-oauth-bind:${state}`;
+                const signature = await wallet.signMessage(message);
+                return {
+                    address: wallet.address,
+                    signature,
+                    signatureType: "evm"
+                };
+            },
         });
 
         // Verify attestation cryptographically
@@ -304,6 +404,11 @@ async function verifyGitHubAccount() {
         console.log("Verified user:", result.user.username);
         console.log("Provider ID:", result.user.providerId);
         console.log("Attestation valid:", verification.valid);
+
+        // Check wallet binding in attestation
+        if (result.attestation.metadata.walletBinding) {
+            console.log("Bound wallet:", result.attestation.metadata.walletBinding.address);
+        }
 
         return result;
 
