@@ -40,3 +40,23 @@ const response = await dahr.startProxy({
 * Custom Headers: Add your own headers to requests
 * Payload Support: Send data with your requests
 * Authorization: Include authorization tokens when needed
+
+### Choosing Between DAHR and TLSNotary
+
+The Demos Web2 system offers two complementary methods for web attestation:
+
+<CardGroup cols={2}>
+  <Card title="DAHR" icon="rocket" href="/sdk/web2/dahr-api-reference/overview">
+    **Fast proxied requests** with hash attestation. Best for general API calls where speed matters. Response hashes are stored on-chain.
+  </Card>
+  <Card title="TLSNotary" icon="shield-check" href="/sdk/web2/tlsnotary/overview">
+    **Cryptographic proofs** from TLS sessions. Best for confidential data requiring verifiable attestation with selective disclosure.
+  </Card>
+</CardGroup>
+
+| Feature | DAHR | TLSNotary |
+|---------|------|-----------|
+| Speed | ~500ms | 2-5s |
+| Cost | Gas only | 1+ DEM + gas |
+| Privacy | Hash attestation | Zero-knowledge possible |
+| Best for | General APIs | Confidential data |

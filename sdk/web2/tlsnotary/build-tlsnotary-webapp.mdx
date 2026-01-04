@@ -1,0 +1,814 @@
+---
+title: "Build a TLSNotary Webapp"
+description: "Step-by-step tutorial to build a browser-based TLSNotary attestation application"
+icon: "hammer"
+---
+
+# Build a TLSNotary Webapp
+
+This tutorial walks you through building a complete browser-based TLSNotary attestation application from scratch. By the end, you'll have a working webapp that can:
+
+- Connect to the Demos Network
+- Request attestation tokens
+- Perform TLS attestations on HTTPS endpoints
+- Store cryptographic proofs on-chain
+
+## Prerequisites
+
+- Node.js 18+ or Bun
+- Basic knowledge of React and TypeScript
+- A Demos wallet with some DEM tokens for fees
+
+## Project Setup
+
+### Step 1: Initialize Project
+
+```bash
+mkdir tlsnotary-app
+cd tlsnotary-app
+bun init -y
+```
+
+### Step 2: Install Dependencies
+
+```bash
+bun add @kynesyslabs/demosdk tlsn-js react react-dom comlink
+bun add -d webpack webpack-cli webpack-dev-server ts-loader \
+  html-webpack-plugin copy-webpack-plugin typescript \
+  @types/react @types/react-dom \
+  crypto-browserify stream-browserify vm-browserify buffer process
+```
+
+### Step 3: Create Project Structure
+
+```
+tlsnotary-app/
+├── src/
+│   ├── app.tsx           # Main React application
+│   ├── TLSNotaryClient.ts # WASM client wrapper
+│   └── index.html        # HTML template
+├── webpack.config.cjs    # Webpack configuration
+├── tsconfig.json         # TypeScript configuration
+└── package.json
+```
+
+## Configuration Files
+
+### tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "lib": ["DOM", "ES2020"]
+  },
+  "include": ["src/**/*"]
+}
+```
+
+### webpack.config.cjs
+
+<Warning>
+The cross-origin isolation headers are **required** for TLSNotary WASM to work. Without them, `SharedArrayBuffer` won't be available and the attestation will fail.
+</Warning>
+
+```javascript
+const webpack = require('webpack');
+const path = require('path');
+const CopyWebpackPlugin = require('copy-webpack-plugin');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+
+module.exports = {
+  mode: 'development',
+  entry: {
+    app: path.join(__dirname, 'src', 'app.tsx'),
+  },
+  output: {
+    filename: '[name].bundle.js',
+    path: path.resolve(__dirname, 'dist'),
+    clean: true,
+    publicPath: '/',
+  },
+  module: {
+    rules: [
+      {
+        test: /\.(ts|tsx)$/,
+        exclude: /node_modules/,
+        use: ['ts-loader'],
+      },
+      {
+        test: /\.css$/,
+        use: ['style-loader', 'css-loader'],
+      },
+    ],
+  },
+  resolve: {
+    extensions: ['.js', '.jsx', '.ts', '.tsx'],
+    fallback: {
+      // Required polyfills for Demos SDK
+      crypto: require.resolve('crypto-browserify'),
+      stream: require.resolve('stream-browserify'),
+      vm: require.resolve('vm-browserify'),
+      // Stub out unused Node.js modules
+      fs: false,
+      path: false,
+      os: false,
+    },
+  },
+  plugins: [
+    // Copy tlsn-js WASM files to dist
+    new CopyWebpackPlugin({
+      patterns: [
+        {
+          from: 'node_modules/tlsn-js/build',
+          to: path.join(__dirname, 'dist'),
+          force: true,
+        },
+      ],
+    }),
+    new HtmlWebpackPlugin({
+      template: path.join(__dirname, 'src', 'index.html'),
+      filename: 'index.html',
+    }),
+    // Provide Node.js globals for browser
+    new webpack.ProvidePlugin({
+      process: 'process/browser',
+      Buffer: ['buffer', 'Buffer'],
+    }),
+  ],
+  devServer: {
+    port: 3000,
+    host: 'localhost',
+    hot: true,
+    // CRITICAL: Required for SharedArrayBuffer (WASM threading)
+    headers: {
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Cross-Origin-Opener-Policy': 'same-origin',
+    },
+  },
+};
+```
+
+### package.json scripts
+
+Add these scripts to your `package.json`:
+
+```json
+{
+  "scripts": {
+    "dev": "webpack serve --mode development",
+    "build": "webpack --mode production"
+  }
+}
+```
+
+## Source Files
+
+### src/index.html
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TLSNotary Attestation App</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    input, button, textarea {
+      padding: 10px;
+      margin: 5px 0;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+    }
+    button {
+      background: #3B82F6;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover { background: #2563EB; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    .log {
+      background: #1a1a1a;
+      color: #00ff00;
+      padding: 15px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .error { color: #ff4444; }
+    .success { color: #44ff44; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+</body>
+</html>
+```
+
+### src/TLSNotaryClient.ts
+
+This wrapper handles the tlsn-js WASM initialization:
+
+```typescript
+import * as Comlink from 'comlink';
+
+interface TLSNotaryConfig {
+  notaryUrl: string;
+  rpcUrl: string;
+  loggingLevel?: 'Debug' | 'Info' | 'Warn' | 'Error';
+}
+
+interface VerificationResult {
+  sent: string;
+  recv: string;
+  time: number;
+  verifyingKey?: any;
+}
+
+export class TLSNotaryClient {
+  private config: TLSNotaryConfig;
+  private worker: any = null;
+
+  constructor(config: TLSNotaryConfig) {
+    this.config = config;
+  }
+
+  async initialize(): Promise<void> {
+    // Load the WASM worker
+    const worker = new Worker('/worker.js', { type: 'module' });
+    this.worker = Comlink.wrap(worker);
+
+    await this.worker.init({
+      loggingLevel: this.config.loggingLevel || 'Info',
+    });
+
+    // Expose worker globally for direct Prover/Verifier access
+    (window as any).__worker = this.worker;
+
+    console.log('TLSNotary WASM initialized');
+  }
+
+  async verify(presentationJSON: string | object): Promise<VerificationResult> {
+    const presentation = typeof presentationJSON === 'string'
+      ? JSON.parse(presentationJSON)
+      : presentationJSON;
+    return this.worker.Verifier.verify(presentation);
+  }
+
+  updateConfig(config: Partial<TLSNotaryConfig>): void {
+    this.config = { ...this.config, ...config };
+  }
+
+  getConfig(): TLSNotaryConfig {
+    return { ...this.config };
+  }
+}
+```
+
+### src/app.tsx
+
+The main React application with full TLSNotary integration:
+
+```tsx
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Demos } from '@kynesyslabs/demosdk/websdk';
+import { TLSNotaryService } from '@kynesyslabs/demosdk/tlsnotary/service';
+import { TLSNotaryClient } from './TLSNotaryClient';
+
+// Global instances
+let tlsnClient: TLSNotaryClient | null = null;
+let demosInstance: Demos | null = null;
+let tlsnService: TLSNotaryService | null = null;
+
+function App() {
+  // State
+  const [logs, setLogs] = useState<Array<{ msg: string; type: string }>>([]);
+  const [wasmReady, setWasmReady] = useState(false);
+  const [walletConnected, setWalletConnected] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [tokenId, setTokenId] = useState('');
+  const [wsProxyUrl, setWsProxyUrl] = useState('');
+  const [result, setResult] = useState<any>(null);
+
+  // Configuration
+  const [notaryUrl, setNotaryUrl] = useState('http://localhost:7047');
+  const [rpcUrl, setRpcUrl] = useState('http://localhost:53550');
+  const [mnemonic, setMnemonic] = useState('');
+  const [targetUrl, setTargetUrl] = useState('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+  const [method, setMethod] = useState('GET');
+  const [maxRecv, setMaxRecv] = useState(4096);
+
+  const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // Logger
+  const log = useCallback((msg: string, type: string = 'info') => {
+    const timestamp = new Date().toLocaleTimeString();
+    setLogs(prev => [...prev, { msg: `[${timestamp}] ${msg}`, type }]);
+  }, []);
+
+  // Auto-scroll logs
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs]);
+
+  // Initialize WASM on mount
+  useEffect(() => {
+    const init = async () => {
+      try {
+        log('Initializing TLSNotary WASM...', 'info');
+        tlsnClient = new TLSNotaryClient({ notaryUrl, rpcUrl });
+        await tlsnClient.initialize();
+        setWasmReady(true);
+        log('WASM initialized successfully!', 'success');
+      } catch (error: any) {
+        log(`WASM init failed: ${error.message}`, 'error');
+      }
+    };
+    init();
+  }, []);
+
+  // Connect wallet
+  // NOTE: For production apps, use demos.connectWalletExtension() instead
+  // The mnemonic input here is for development/testing simplicity
+  const handleConnectWallet = useCallback(async () => {
+    if (!mnemonic.trim()) {
+      log('Please enter a mnemonic', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      log('Connecting to Demos Network...', 'info');
+      demosInstance = new Demos();
+      await demosInstance.connect(rpcUrl);
+      log('Connected to node', 'success');
+
+      // For development: direct mnemonic
+      await demosInstance.connectWallet(mnemonic.trim());
+
+      // For production: use Wallet Extension instead
+      // await demosInstance.connectWalletExtension();
+
+      tlsnService = new TLSNotaryService(demosInstance);
+      setWalletConnected(true);
+      log('Wallet connected!', 'success');
+    } catch (error: any) {
+      log(`Wallet connection failed: ${error.message}`, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [mnemonic, rpcUrl, log]);
+
+  // Request attestation token
+  const handleRequestToken = useCallback(async () => {
+    if (!tlsnService) {
+      log('Please connect wallet first', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      log('Requesting attestation token (burns 1 DEM)...', 'info');
+
+      const response = await tlsnService.requestAttestation({
+        targetUrl: targetUrl,
+      });
+
+      setTokenId(response.tokenId);
+      setWsProxyUrl(response.proxyUrl);
+
+      log(`Token ID: ${response.tokenId}`, 'success');
+      log(`Proxy URL: ${response.proxyUrl}`, 'info');
+      log(`Expires: ${new Date(response.expiresAt).toLocaleTimeString()}`, 'info');
+    } catch (error: any) {
+      log(`Token request failed: ${error.message}`, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [targetUrl, log]);
+
+  // Perform attestation
+  const handleAttest = useCallback(async () => {
+    if (!wsProxyUrl) {
+      log('Please request a token first', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      log('Starting TLS attestation...', 'info');
+
+      const notarizeConfig = {
+        notaryUrl: notaryUrl,
+        websocketProxyUrl: wsProxyUrl,
+        maxSentData: 16384,
+        maxRecvData: maxRecv,
+        url: targetUrl,
+        method: method as 'GET' | 'POST',
+        headers: { Accept: 'application/json' },
+        commit: {
+          sent: [{ start: 0, end: 100 }],
+          recv: [{ start: 0, end: Math.min(200, maxRecv) }],
+        },
+        serverIdentity: true,
+      };
+
+      // Use the WASM worker directly
+      const presentationJSON = await (window as any).__worker.Prover.notarize(notarizeConfig);
+      log('Attestation complete!', 'success');
+
+      // Verify locally
+      log('Verifying proof...', 'info');
+      const verification = await tlsnClient?.verify(presentationJSON);
+      log('Verification passed!', 'success');
+
+      setResult({ presentation: presentationJSON, verification });
+    } catch (error: any) {
+      log(`Attestation failed: ${error.message}`, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [wsProxyUrl, targetUrl, notaryUrl, method, maxRecv, log]);
+
+  // Full attestation (request token + attest in one click)
+  const handleFullAttestation = useCallback(async () => {
+    if (!tlsnService) {
+      log('Please connect wallet first', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      // Step 1: Request token
+      log('Requesting attestation token...', 'info');
+      const tokenResponse = await tlsnService.requestAttestation({
+        targetUrl: targetUrl,
+      });
+
+      setTokenId(tokenResponse.tokenId);
+      setWsProxyUrl(tokenResponse.proxyUrl);
+      log(`Token received: ${tokenResponse.tokenId}`, 'success');
+
+      // Step 2: Perform attestation
+      log('Starting TLS attestation...', 'info');
+      const notarizeConfig = {
+        notaryUrl: notaryUrl,
+        websocketProxyUrl: tokenResponse.proxyUrl,
+        maxSentData: 16384,
+        maxRecvData: maxRecv,
+        url: targetUrl,
+        method: method as 'GET' | 'POST',
+        headers: { Accept: 'application/json' },
+        commit: {
+          sent: [{ start: 0, end: 100 }],
+          recv: [{ start: 0, end: Math.min(200, maxRecv) }],
+        },
+        serverIdentity: true,
+      };
+
+      const presentationJSON = await (window as any).__worker.Prover.notarize(notarizeConfig);
+      log('Attestation complete!', 'success');
+
+      // Step 3: Verify
+      const verification = await tlsnClient?.verify(presentationJSON);
+      log('Verification passed!', 'success');
+
+      setResult({ presentation: presentationJSON, verification });
+    } catch (error: any) {
+      log(`Full attestation failed: ${error.message}`, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [targetUrl, notaryUrl, method, maxRecv, log]);
+
+  // Store proof on-chain
+  const handleStoreProof = useCallback(async (storageType: 'onchain' | 'ipfs') => {
+    if (!result || !tlsnService || !tokenId) {
+      log('Missing result, service, or token ID', 'error');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const proofString = typeof result.presentation === 'string'
+        ? result.presentation
+        : JSON.stringify(result.presentation);
+
+      const proofSizeKB = Math.ceil(proofString.length / 1024);
+      const estimatedFee = tlsnService.calculateStorageFee(proofSizeKB);
+
+      log(`Storing proof (${proofSizeKB} KB, ~${estimatedFee} DEM fee)...`, 'info');
+
+      const storeResult = await tlsnService.storeProof(
+        tokenId,
+        proofString,
+        { storage: storageType }
+      );
+
+      log(`Proof stored on ${storageType}!`, 'success');
+      log(`Transaction: ${storeResult.txHash}`, 'info');
+      log(`Fee: ${storeResult.storageFee} DEM`, 'info');
+    } catch (error: any) {
+      log(`Store failed: ${error.message}`, 'error');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [result, tokenId, log]);
+
+  return (
+    <div>
+      <h1>TLSNotary Attestation App</h1>
+
+      {/* Configuration */}
+      <div className="card">
+        <h3>Configuration</h3>
+        <div>
+          <label>Notary URL:</label>
+          <input
+            type="text"
+            value={notaryUrl}
+            onChange={(e) => setNotaryUrl(e.target.value)}
+            style={{ width: '100%' }}
+          />
+        </div>
+        <div>
+          <label>RPC URL:</label>
+          <input
+            type="text"
+            value={rpcUrl}
+            onChange={(e) => setRpcUrl(e.target.value)}
+            style={{ width: '100%' }}
+          />
+        </div>
+        <p>WASM Status: {wasmReady ? '✅ Ready' : '⏳ Loading...'}</p>
+      </div>
+
+      {/* Wallet Connection */}
+      <div className="card">
+        <h3>Wallet Connection</h3>
+        <p style={{ fontSize: '12px', color: '#666' }}>
+          For production apps, use the Demos Wallet Extension instead of entering a mnemonic directly.
+        </p>
+        <textarea
+          placeholder="Enter your mnemonic (for testing only)"
+          value={mnemonic}
+          onChange={(e) => setMnemonic(e.target.value)}
+          rows={2}
+          style={{ width: '100%' }}
+        />
+        <button
+          onClick={handleConnectWallet}
+          disabled={!wasmReady || isLoading || walletConnected}
+        >
+          {walletConnected ? '✅ Wallet Connected' : 'Connect Wallet'}
+        </button>
+      </div>
+
+      {/* Attestation */}
+      <div className="card">
+        <h3>Attestation</h3>
+        <div>
+          <label>Target URL:</label>
+          <input
+            type="text"
+            value={targetUrl}
+            onChange={(e) => setTargetUrl(e.target.value)}
+            style={{ width: '100%' }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+          <select value={method} onChange={(e) => setMethod(e.target.value)}>
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+          </select>
+          <input
+            type="number"
+            value={maxRecv}
+            onChange={(e) => setMaxRecv(Number(e.target.value))}
+            placeholder="Max receive bytes"
+            style={{ width: '150px' }}
+          />
+        </div>
+        <div style={{ marginTop: '10px' }}>
+          <button
+            onClick={handleFullAttestation}
+            disabled={!walletConnected || isLoading}
+            style={{ marginRight: '10px' }}
+          >
+            {isLoading ? 'Processing...' : 'Full Attestation'}
+          </button>
+          <button
+            onClick={handleRequestToken}
+            disabled={!walletConnected || isLoading}
+            style={{ marginRight: '10px', background: '#6366F1' }}
+          >
+            1. Request Token
+          </button>
+          <button
+            onClick={handleAttest}
+            disabled={!wsProxyUrl || isLoading}
+            style={{ background: '#10B981' }}
+          >
+            2. Attest
+          </button>
+        </div>
+        {tokenId && <p>Token ID: <code>{tokenId}</code></p>}
+      </div>
+
+      {/* Result */}
+      {result && (
+        <div className="card">
+          <h3>Attestation Result</h3>
+          <p>✅ Proof generated and verified!</p>
+          <p>Sent data: {result.verification?.sent?.substring(0, 100)}...</p>
+          <p>Received data: {result.verification?.recv?.substring(0, 100)}...</p>
+          <div style={{ marginTop: '10px' }}>
+            <button
+              onClick={() => handleStoreProof('onchain')}
+              disabled={isLoading}
+              style={{ marginRight: '10px', background: '#F59E0B' }}
+            >
+              Store On-Chain
+            </button>
+            <button
+              onClick={() => handleStoreProof('ipfs')}
+              disabled={isLoading}
+              style={{ background: '#8B5CF6' }}
+            >
+              Store on IPFS
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Logs */}
+      <div className="card">
+        <h3>Logs</h3>
+        <div className="log">
+          {logs.map((l, i) => (
+            <div key={i} className={l.type}>{l.msg}</div>
+          ))}
+          <div ref={logsEndRef} />
+        </div>
+        <button onClick={() => setLogs([])} style={{ marginTop: '10px', background: '#666' }}>
+          Clear Logs
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Render
+const root = createRoot(document.getElementById('root')!);
+root.render(<App />);
+```
+
+## Running the Application
+
+```bash
+bun run dev
+```
+
+Open http://localhost:3000 in your browser.
+
+## Usage Flow
+
+<Steps>
+  <Step title="Initialize WASM">
+    The app automatically initializes the TLSNotary WASM module on load.
+  </Step>
+  <Step title="Connect Wallet">
+    Enter your mnemonic and click "Connect Wallet" to connect to the Demos Network.
+  </Step>
+  <Step title="Configure Target">
+    Enter the HTTPS URL you want to attest. Only HTTPS URLs are supported.
+  </Step>
+  <Step title="Perform Attestation">
+    Click "Full Attestation" to request a token and perform the attestation in one step.
+    This burns 1 DEM for the token request.
+  </Step>
+  <Step title="Store Proof (Optional)">
+    After attestation, click "Store On-Chain" or "Store on IPFS" to persist the proof.
+    This burns 1 DEM base + 1 DEM per KB of proof data.
+  </Step>
+</Steps>
+
+## Production Considerations
+
+### Wallet Connection
+
+For production applications, use the Demos Wallet Extension instead of direct mnemonic input:
+
+```typescript
+// Replace this:
+await demosInstance.connectWallet(mnemonic);
+
+// With this:
+await demosInstance.connectWalletExtension();
+```
+
+The Wallet Extension provides better security as the mnemonic never leaves the extension.
+
+### Cross-Origin Isolation in Production
+
+For production deployments, configure your web server to send the required headers:
+
+<Tabs>
+  <Tab title="nginx">
+```nginx
+add_header Cross-Origin-Embedder-Policy "require-corp" always;
+add_header Cross-Origin-Opener-Policy "same-origin" always;
+```
+  </Tab>
+  <Tab title="Express.js">
+```javascript
+app.use((req, res, next) => {
+  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  next();
+});
+```
+  </Tab>
+  <Tab title="Apache">
+```apache
+Header set Cross-Origin-Embedder-Policy "require-corp"
+Header set Cross-Origin-Opener-Policy "same-origin"
+```
+  </Tab>
+</Tabs>
+
+### Commit Ranges
+
+The `commit` field in the notarization config specifies which parts of the request/response to include in the proof:
+
+```typescript
+commit: {
+  sent: [{ start: 0, end: 100 }],  // Reveal first 100 bytes of request
+  recv: [{ start: 0, end: 200 }],  // Reveal first 200 bytes of response
+}
+```
+
+<Warning>
+Larger ranges result in larger proofs, which increase storage costs. Only include the data you need to prove.
+</Warning>
+
+### Error Handling
+
+Always implement proper error handling for production:
+
+```typescript
+try {
+  const response = await tlsnService.requestAttestation({ targetUrl });
+} catch (error: any) {
+  if (error.message.includes('HTTPS')) {
+    // URL must be HTTPS
+  } else if (error.message.includes('Token not created')) {
+    // Token creation timed out - may need to retry
+  } else if (error.message.includes('balance')) {
+    // Insufficient DEM balance
+  }
+}
+```
+
+## Fee Summary
+
+| Operation | Cost |
+|-----------|------|
+| Request attestation token | 1 DEM |
+| Store proof (base fee) | 1 DEM |
+| Store proof (per KB) | +1 DEM per KB |
+
+**Example**: Attesting and storing a 5KB proof costs:
+- Token request: 1 DEM
+- Storage: 1 (base) + 5 (size) = 6 DEM
+- **Total: 7 DEM** + gas fees
+
+## Next Steps
+
+- Learn about [selective redaction](/sdk/web2/tlsnotary/api-reference#selective-redaction) to hide sensitive data in proofs
+- Explore [use cases](/sdk/web2/tlsnotary/use-cases) for TLSNotary attestations
+- Review the full [API reference](/sdk/web2/tlsnotary/api-reference)

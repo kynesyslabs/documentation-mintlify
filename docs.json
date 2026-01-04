@@ -222,6 +222,15 @@
                   "sdk/web2/dahr-api-reference/types"
                 ]
               },
+              {
+                "group": "TLSNotary",
+                "pages": [
+                  "sdk/web2/tlsnotary/overview",
+                  "sdk/web2/tlsnotary/build-tlsnotary-webapp",
+                  "sdk/web2/tlsnotary/api-reference",
+                  "sdk/web2/tlsnotary/use-cases"
+                ]
+              },
               "sdk/web2/making-requests",
               {
                 "group": "Identities",

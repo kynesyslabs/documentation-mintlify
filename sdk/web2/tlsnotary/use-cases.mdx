@@ -1,0 +1,193 @@
+---
+title: "TLSNotary Use Cases"
+description: "Common use cases for TLSNotary cryptographic attestation"
+icon: "lightbulb"
+---
+
+# TLSNotary Use Cases
+
+TLSNotary enables powerful use cases where you need to prove web content without revealing everything. Here are common scenarios:
+
+### Financial Data Attestation
+
+Prove your account balance or financial status without revealing sensitive details:
+
+```typescript
+// Prove balance without revealing account number
+const result = await demos.web2.requestTlsn({
+    url: "https://api.bank.com/v1/accounts/balance",
+    headers: {
+        "Authorization": `Bearer ${bankToken}`
+    },
+    redactions: [
+        "$.accountNumber",
+        "$.routingNumber",
+        "$.transactionHistory"
+    ]
+})
+
+// The proof shows: { balance: 15000.00, currency: "USD" }
+// Hidden: Account number, routing number, transaction details
+```
+
+**Real-world applications:**
+- Proof of funds for loan applications
+- Balance verification for rental applications
+- Asset attestation for DeFi protocols
+
+### Identity Verification
+
+Prove account ownership on web services without sharing credentials:
+
+```typescript
+// Prove Twitter account ownership
+const result = await demos.web2.requestTlsn({
+    url: "https://api.twitter.com/2/users/me",
+    headers: {
+        "Authorization": `Bearer ${twitterToken}`
+    }
+})
+
+// Proves: You control @username with id 123456
+// Verifiable: Anyone can verify the proof
+```
+
+**Real-world applications:**
+- Social media verification for Web3 profiles
+- Sybil resistance in DAOs
+- Cross-platform identity bridging
+
+### API Response Attestation
+
+Create verifiable proofs of API responses for smart contracts or off-chain verification:
+
+```typescript
+// Attest cryptocurrency price at a specific moment
+const result = await demos.web2.requestTlsn({
+    url: "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+})
+
+// Proves: BTC = $67,543.21 at timestamp 1704067200
+// Use: Oracle data, price verification, historical proof
+```
+
+**Real-world applications:**
+- Decentralized oracle data
+- Price feed verification
+- Market data attestation
+
+### Employment & Income Verification
+
+Prove employment status or income without revealing full details:
+
+```typescript
+// Prove employment at a company
+const result = await demos.web2.requestTlsn({
+    url: "https://api.hr-platform.com/v1/employee/status",
+    headers: {
+        "Authorization": `Bearer ${employeeToken}`
+    },
+    redactions: [
+        "$.salary",
+        "$.ssn",
+        "$.managerEmail",
+        "$.performanceReviews"
+    ]
+})
+
+// Proves: Employed at Company X, Role: Engineer, Since: 2022
+// Hidden: Salary, SSN, performance data
+```
+
+### Gaming & Achievement Verification
+
+Prove gaming achievements or statistics:
+
+```typescript
+// Prove Steam achievements
+const result = await demos.web2.requestTlsn({
+    url: "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1",
+    headers: { "key": steamApiKey }
+})
+
+// Proves: Player has achievement X in game Y
+// Use: NFT minting, tournament eligibility, rewards
+```
+
+### Comparison: When to Use What
+
+```typescript
+// DAHR - Fast, for general use, non-sensitive data
+const dahrResult = await dahr.startProxy({
+    url: "https://api.example.com/public-data",
+    method: "GET"
+})
+// Speed: ~500ms
+// On-chain: Hash of response
+// Privacy: Full response visible to proxy
+// Cost: Gas only
+
+// TLSNotary - Cryptographic proof, sensitive data
+const tlsnResult = await demos.web2.requestTlsn({
+    url: "https://api.example.com/private-data",
+    redactions: ["$.sensitiveField"]
+})
+// Speed: 2-5s
+// On-chain: Proof metadata only
+// Privacy: Selective disclosure possible
+// Cost: 1+ DEM + gas
+```
+
+### Decision Matrix
+
+| Scenario | Recommended | Reason |
+|----------|-------------|--------|
+| Public API data | DAHR | Speed, lower cost |
+| Price feeds | DAHR | Frequent updates, speed |
+| Bank account proof | TLSNotary | Confidential data |
+| Identity verification | TLSNotary | Selective disclosure |
+| Gaming stats | Either | Depends on sensitivity |
+| OAuth token exchange | DAHR | Speed critical |
+| Proof of reserves | TLSNotary | Cryptographic verification |
+
+### Integration with Smart Contracts
+
+TLSNotary proofs can be verified on-chain:
+
+```solidity
+// Example Solidity interface (conceptual)
+interface ITlsnVerifier {
+    function verifyProof(
+        bytes calldata proof,
+        bytes32 expectedHash
+    ) external view returns (bool);
+
+    function extractClaim(
+        bytes calldata proof,
+        string calldata jsonPath
+    ) external view returns (bytes memory);
+}
+
+// Usage in contract
+function claimReward(bytes calldata tlsnProof) external {
+    require(
+        verifier.verifyProof(tlsnProof, expectedProofHash),
+        "Invalid proof"
+    );
+
+    bytes memory balance = verifier.extractClaim(
+        tlsnProof,
+        "$.balance"
+    );
+
+    // Process based on verified balance
+}
+```
+
+### Best Practices
+
+1. **Minimize proof size**: Only request the data you need
+2. **Use redactions**: Hide sensitive fields you don't need to prove
+3. **Cache results**: TLSNotary proofs are reusable once created
+4. **Handle timeouts**: Large responses may take longer to notarize
+5. **Check costs**: Estimate storage costs before requesting large proofs
