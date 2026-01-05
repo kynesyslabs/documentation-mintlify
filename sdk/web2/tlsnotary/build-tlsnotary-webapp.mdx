@@ -31,8 +31,12 @@ bun init -y
 
 ### Step 2: Install Dependencies
 
+<Info>
+The Demos SDK (`@kynesyslabs/demosdk`) includes all TLSNotary WASM files and webpack helpers. You don't need to install `tlsn-js` separately!
+</Info>
+
 ```bash
-bun add @kynesyslabs/demosdk tlsn-js react react-dom comlink
+bun add @kynesyslabs/demosdk react react-dom comlink
 bun add -d webpack webpack-cli webpack-dev-server ts-loader \
   html-webpack-plugin copy-webpack-plugin typescript \
   @types/react @types/react-dom \
@@ -45,6 +49,7 @@ bun add -d webpack webpack-cli webpack-dev-server ts-loader \
 tlsnotary-app/
 ├── src/
 │   ├── app.tsx           # Main React application
+│   ├── worker.ts         # Web Worker for WASM
 │   ├── TLSNotaryClient.ts # WASM client wrapper
 │   └── index.html        # HTML template
 ├── webpack.config.cjs    # Webpack configuration
@@ -78,11 +83,24 @@ tlsnotary-app/
 The cross-origin isolation headers are **required** for TLSNotary WASM to work. Without them, `SharedArrayBuffer` won't be available and the attestation will fail.
 </Warning>
 
+The SDK provides webpack helpers that automatically configure WASM file copying and required polyfills:
+
 ```javascript
 const webpack = require('webpack');
 const path = require('path');
-const CopyWebpackPlugin = require('copy-webpack-plugin');
 const HtmlWebpackPlugin = require('html-webpack-plugin');
+
+// Import TLSNotary webpack helpers from SDK - no need to install tlsn-js!
+const {
+  getTlsnWebpackConfig,
+  getCrossOriginHeaders,
+} = require('@kynesyslabs/demosdk/tlsnotary/webpack');
+
+// Get the TLSNotary webpack configuration
+// Output to dist root (.) because tlsn-js expects WASM files at the web root
+const tlsnConfig = getTlsnWebpackConfig({
+  wasmOutputPath: '.', // Output to dist/ root
+});
 
 module.exports = {
   mode: 'development',
@@ -111,27 +129,21 @@ module.exports = {
   resolve: {
     extensions: ['.js', '.jsx', '.ts', '.tsx'],
     fallback: {
-      // Required polyfills for Demos SDK
+      // TLSNotary polyfills from SDK
+      ...tlsnConfig.resolve.fallback,
+      // Additional polyfills for this app
       crypto: require.resolve('crypto-browserify'),
       stream: require.resolve('stream-browserify'),
       vm: require.resolve('vm-browserify'),
       // Stub out unused Node.js modules
-      fs: false,
-      path: false,
-      os: false,
+      constants: false,
+      readline: false,
     },
   },
   plugins: [
-    // Copy tlsn-js WASM files to dist
-    new CopyWebpackPlugin({
-      patterns: [
-        {
-          from: 'node_modules/tlsn-js/build',
-          to: path.join(__dirname, 'dist'),
-          force: true,
-        },
-      ],
-    }),
+    // TLSNotary plugins (copies WASM files from SDK)
+    ...tlsnConfig.plugins,
+    // App plugins
     new HtmlWebpackPlugin({
       template: path.join(__dirname, 'src', 'index.html'),
       filename: 'index.html',
@@ -142,18 +154,28 @@ module.exports = {
       Buffer: ['buffer', 'Buffer'],
     }),
   ],
+  experiments: {
+    // Enable async WASM loading
+    ...tlsnConfig.experiments,
+  },
   devServer: {
     port: 3000,
     host: 'localhost',
     hot: true,
-    // CRITICAL: Required for SharedArrayBuffer (WASM threading)
-    headers: {
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cross-Origin-Opener-Policy': 'same-origin',
-    },
+    // Required for SharedArrayBuffer (WASM threads) - from SDK helper
+    headers: getCrossOriginHeaders(),
   },
 };
 ```
+
+<Tip>
+The `getTlsnWebpackConfig()` helper automatically:
+- Configures CopyWebpackPlugin to copy WASM files from the SDK
+- Sets up Node.js polyfills required by TLSNotary
+- Enables async WebAssembly experiments
+
+The `getCrossOriginHeaders()` helper returns the required COOP/COEP headers for SharedArrayBuffer.
+</Tip>
 
 ### package.json scripts
 
@@ -228,58 +250,126 @@ Add these scripts to your `package.json`:
 </html>
 ```
 
+### src/worker.ts
+
+The Web Worker loads and exposes the TLSNotary WASM module. All imports come from the SDK:
+
+```typescript
+/**
+ * Web Worker for TLSNotary WASM
+ *
+ * Uses Comlink to expose the tlsn-js API to the main thread.
+ * The WASM runs in a worker to not block the UI.
+ *
+ * NOTE: We import from the SDK which re-exports tlsn-js classes.
+ * This means users don't need to install tlsn-js separately!
+ */
+import * as Comlink from 'comlink';
+import {
+  init,
+  Prover,
+  Presentation,
+  NotaryServer,
+  Transcript,
+} from '@kynesyslabs/demosdk/tlsnotary';
+
+// Expose the API to the main thread
+Comlink.expose({
+  init,
+  Prover,
+  Presentation,
+  NotaryServer,
+  Transcript,
+});
+```
+
 ### src/TLSNotaryClient.ts
 
-This wrapper handles the tlsn-js WASM initialization:
+This wrapper handles the WASM initialization and provides a clean API. All types come from the SDK:
 
 ```typescript
 import * as Comlink from 'comlink';
+import {
+  Transcript,
+  type TLSNotaryConfig,
+  type AttestResult,
+  type AttestOptions,
+  type VerificationResult,
+  type ProxyRequestResponse,
+  type StatusCallback,
+} from '@kynesyslabs/demosdk/tlsnotary';
+import type { Prover as TProver, Presentation as TPresentation } from '@kynesyslabs/demosdk/tlsnotary';
 
-interface TLSNotaryConfig {
-  notaryUrl: string;
-  rpcUrl: string;
-  loggingLevel?: 'Debug' | 'Info' | 'Warn' | 'Error';
-}
-
-interface VerificationResult {
-  sent: string;
-  recv: string;
-  time: number;
-  verifyingKey?: any;
-}
+// Create worker with Comlink
+const worker: any = Comlink.wrap(
+  new Worker(new URL('./worker.ts', import.meta.url))
+);
 
 export class TLSNotaryClient {
   private config: TLSNotaryConfig;
-  private worker: any = null;
+  private initialized = false;
 
   constructor(config: TLSNotaryConfig) {
-    this.config = config;
+    this.config = {
+      loggingLevel: 'Info',
+      ...config,
+    };
   }
 
   async initialize(): Promise<void> {
-    // Load the WASM worker
-    const worker = new Worker('/worker.js', { type: 'module' });
-    this.worker = Comlink.wrap(worker);
+    if (this.initialized) return;
+    await worker.init({ loggingLevel: this.config.loggingLevel });
+    this.initialized = true;
+    // Expose worker globally for direct Prover access
+    (window as any).__worker = worker;
+  }
 
-    await this.worker.init({
-      loggingLevel: this.config.loggingLevel || 'Info',
+  async requestProxy(targetUrl: string): Promise<ProxyRequestResponse> {
+    if (!this.config.rpcUrl) {
+      throw new Error('No RPC URL configured for dynamic proxy requests.');
+    }
+
+    const response = await fetch(this.config.rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        method: 'nodeCall',
+        params: [{ message: 'requestTLSNproxy', data: { targetUrl } }],
+      }),
     });
 
-    // Expose worker globally for direct Prover/Verifier access
-    (window as any).__worker = this.worker;
-
-    console.log('TLSNotary WASM initialized');
+    const result = await response.json();
+    if (result.result !== 200) {
+      throw new Error(`Failed to request proxy: ${result.response?.message || 'Unknown error'}`);
+    }
+    return result.response;
   }
 
-  async verify(presentationJSON: string | object): Promise<VerificationResult> {
-    const presentation = typeof presentationJSON === 'string'
-      ? JSON.parse(presentationJSON)
-      : presentationJSON;
-    return this.worker.Verifier.verify(presentation);
+  async verify(presentationJSON: any): Promise<VerificationResult> {
+    if (!this.initialized) {
+      throw new Error('TLSNotary not initialized. Call initialize() first.');
+    }
+
+    const proof = await new worker.Presentation(presentationJSON.data);
+    const verifierOutput = await proof.verify();
+
+    const transcript = new Transcript({
+      sent: verifierOutput.transcript?.sent || [],
+      recv: verifierOutput.transcript?.recv || [],
+    });
+
+    return {
+      time: verifierOutput.connection_info.time,
+      serverName: verifierOutput.server_name || 'Unknown',
+      sent: transcript.sent(),
+      recv: transcript.recv(),
+      notaryKey: 'N/A',
+      verifyingKey: 'N/A',
+    };
   }
 
-  updateConfig(config: Partial<TLSNotaryConfig>): void {
-    this.config = { ...this.config, ...config };
+  isInitialized(): boolean {
+    return this.initialized;
   }
 
   getConfig(): TLSNotaryConfig {
@@ -352,8 +442,6 @@ function App() {
   }, []);
 
   // Connect wallet
-  // NOTE: For production apps, use demos.connectWalletExtension() instead
-  // The mnemonic input here is for development/testing simplicity
   const handleConnectWallet = useCallback(async () => {
     if (!mnemonic.trim()) {
       log('Please enter a mnemonic', 'error');
