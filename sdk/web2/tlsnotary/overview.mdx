@@ -63,21 +63,78 @@ sequenceDiagram
 
 ```typescript
 import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { TLSNotaryService } from "@kynesyslabs/demosdk/tlsnotary"
 
 const demos = new Demos()
 await demos.connect("https://node2.demos.sh")
 await demos.connectWallet(mnemonic)
 
-// Request TLSNotary attestation
-const result = await demos.web2.requestTlsn({
-    url: "https://api.example.com/private-data",
-    // Optional: specify what to redact in the proof
-    redactions: ["$.password", "$.secret"]
+// Create the service
+const service = new TLSNotaryService(demos)
+
+// Step 1: Request attestation token and get ready-to-use TLSNotary instance
+const { tlsn, tokenId } = await service.createTLSNotary({
+    targetUrl: "https://api.example.com/private-data"
 })
 
-// The proof is automatically stored on-chain
-console.log("Proof stored:", result.proofHash)
-console.log("Transaction:", result.txHash)
+// Step 2: Perform attestation
+const result = await tlsn.attest({
+    url: "https://api.example.com/private-data",
+    // Control what's included in the proof with commit ranges
+    commit: {
+        sent: [{ start: 0, end: 100 }],
+        recv: [{ start: 0, end: 500 }]
+    }
+})
+
+// Step 3: Store proof on-chain (optional)
+const storeResult = await service.storeProof(
+    tokenId,
+    JSON.stringify(result.presentation),
+    { storage: "onchain" }
+)
+
+console.log("Proof stored:", storeResult.txHash)
+console.log("Fee:", storeResult.storageFee, "DEM")
+```
+
+### Wallet Extension Integration
+
+For production dApps, users connect via wallet extensions. The SDK provides `WithConfirmation` methods that implement the 3-step wallet flow:
+
+1. **Generate Transaction**: Create the transaction
+2. **Sign & Confirm**: User approves in wallet extension
+3. **Broadcast**: Send to network
+
+```typescript
+import { TLSNotaryService } from "@kynesyslabs/demosdk/tlsnotary"
+
+const service = new TLSNotaryService(demos)
+
+// With user confirmation for wallet extension apps
+const { tlsn, tokenId } = await service.createTLSNotaryWithConfirmation(
+    { targetUrl: "https://api.example.com/data" },
+    {
+        onConfirm: async (details) => {
+            // Show modal: "Burn 1 DEM for attestation?"
+            return await walletExtension.requestApproval(details.transaction)
+        }
+    }
+)
+
+const result = await tlsn.attest({ url: "https://api.example.com/data" })
+
+await service.storeProofWithConfirmation(
+    tokenId,
+    JSON.stringify(result.presentation),
+    { storage: "onchain" },
+    {
+        onConfirm: async (details) => {
+            // Show modal: "Burn 6 DEM to store proof?"
+            return await walletExtension.requestApproval(details.transaction)
+        }
+    }
+)
 ```
 
 ### Architecture Overview

@@ -6,51 +6,144 @@ icon: "code"
 
 # TLSNotary API Reference
 
-### Methods
+## TLSNotaryService Class
 
-#### requestTlsn()
-
-Initiates a TLSNotary attestation request. This method handles the complete flow: submitting the request transaction, connecting to the proxy, notarizing the response, and storing the proof.
+The `TLSNotaryService` class manages attestation tokens and proof storage. It provides methods for both direct execution and wallet-confirmation flows.
 
 ```typescript
-interface ITlsnRequestParams {
-    url: string                       // Target URL to notarize
-    method?: "GET" | "POST"           // HTTP method (default: GET)
-    headers?: Record<string, string>  // Custom headers
-    body?: string                     // Request body for POST
-    redactions?: string[]             // JSON paths to redact in proof
-}
+import { TLSNotaryService } from '@kynesyslabs/demosdk/tlsnotary';
 
-const result = await demos.web2.requestTlsn(params: ITlsnRequestParams)
+const service = new TLSNotaryService(demos);
 ```
 
-#### Parameters
+### Methods
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | string | Yes | The target URL to notarize |
-| `method` | "GET" \| "POST" | No | HTTP method (default: "GET") |
-| `headers` | Record<string, string> | No | Custom headers to include |
-| `body` | string | No | Request body for POST requests |
-| `redactions` | string[] | No | JSON paths to redact from proof |
+#### requestAttestation()
 
-#### Returns
+Requests an attestation token for a target URL. Burns 1 DEM and returns a proxy URL.
 
 ```typescript
-interface ITlsnResult {
-    response: {
-        status: number                // HTTP status code
-        headers: Record<string, string>  // Response headers
-        body: string                  // Response body
+const { proxyUrl, tokenId, expiresAt } = await service.requestAttestation({
+    targetUrl: 'https://api.example.com/data'
+});
+```
+
+#### requestAttestationWithConfirmation()
+
+Same as `requestAttestation()` but allows user confirmation before broadcasting. **Recommended for wallet extension apps.**
+
+```typescript
+const response = await service.requestAttestationWithConfirmation(
+    { targetUrl: 'https://api.example.com/data' },
+    {
+        onConfirm: async (details) => {
+            // Show transaction to user for approval
+            // details.txHash, details.amount, details.description
+            return await showUserConfirmDialog(details);
+        }
     }
-    proof: {
-        id: string                    // Proof identifier
-        hash: string                  // Proof hash stored on-chain
-        size: number                  // Proof size in bytes
+);
+```
+
+#### createTLSNotary()
+
+Convenience method that handles the full setup: request token → get proxy → create TLSNotary instance → initialize WASM.
+
+```typescript
+const { tlsn, tokenId, proxyUrl } = await service.createTLSNotary({
+    targetUrl: 'https://api.example.com/data'
+});
+
+// Ready to attest immediately!
+const result = await tlsn.attest({ url: 'https://api.example.com/data' });
+```
+
+#### createTLSNotaryWithConfirmation()
+
+Same as `createTLSNotary()` but with user confirmation. **Recommended for wallet extension apps.**
+
+```typescript
+const { tlsn, tokenId } = await service.createTLSNotaryWithConfirmation(
+    { targetUrl: 'https://api.example.com/data' },
+    {
+        onConfirm: async (details) => {
+            return await showUserConfirmDialog(details);
+        }
     }
-    txHash: string                    // Final transaction hash
-    requestTxHash: string             // Initial request transaction
-    storageTxHash: string             // Proof storage transaction
+);
+```
+
+#### storeProof()
+
+Stores an attestation proof on-chain or IPFS.
+
+```typescript
+const { txHash, storageFee } = await service.storeProof(
+    tokenId,
+    JSON.stringify(presentation),
+    { storage: 'onchain' } // or 'ipfs'
+);
+```
+
+#### storeProofWithConfirmation()
+
+Same as `storeProof()` but with user confirmation. **Recommended for wallet extension apps.**
+
+```typescript
+const { txHash, storageFee } = await service.storeProofWithConfirmation(
+    tokenId,
+    JSON.stringify(presentation),
+    { storage: 'onchain' },
+    {
+        onConfirm: async (details) => {
+            return await showUserConfirmDialog(details);
+        }
+    }
+);
+```
+
+#### calculateStorageFee()
+
+Calculate the fee for storing a proof.
+
+```typescript
+const fee = service.calculateStorageFee(5); // 6 DEM for 5KB proof (1 base + 5 per KB)
+```
+
+### Response Types
+
+#### AttestationTokenResponse
+
+```typescript
+interface AttestationTokenResponse {
+    proxyUrl: string;      // WebSocket proxy URL for attestation
+    tokenId: string;       // Unique token ID
+    expiresAt: number;     // Unix timestamp when token expires
+    retriesLeft: number;   // Number of retry attempts remaining
+}
+```
+
+#### StoreProofResponse
+
+```typescript
+interface StoreProofResponse {
+    txHash: string;          // Transaction hash
+    storageFee: number;      // Total fee burned (in DEM)
+    broadcastStatus: number; // HTTP status (200 = success)
+    broadcastMessage?: string;
+}
+```
+
+#### TransactionDetails (for confirmation callbacks)
+
+```typescript
+interface TransactionDetails {
+    transaction: any;      // The signed transaction object
+    txHash: string;        // Transaction hash
+    amount: number;        // Amount in DEM being burned
+    description: string;   // Human-readable description
+    targetUrl?: string;    // For attestation requests
+    tokenId?: string;      // For store transactions
 }
 ```
 
@@ -116,59 +209,145 @@ const tx = await demos.createTransaction({
 | `TLSN_TOKEN_EXPIRED` | Access token expired | Request will auto-retry |
 | `TLSN_PROXY_UNAVAILABLE` | No proxy available for domain | Wait and retry |
 
-### Advanced Usage
+## TLSNotary Class
 
-#### Custom Headers
+The `TLSNotary` class performs the actual WASM-based attestation. Use it after getting a proxy URL from `TLSNotaryService`.
 
 ```typescript
-const result = await demos.web2.requestTlsn({
+import { TLSNotary } from '@kynesyslabs/demosdk/tlsnotary';
+
+const tlsn = new TLSNotary({
+    notaryUrl: 'http://notary.example.com:7047',
+    websocketProxyUrl: proxyUrl, // From TLSNotaryService
+});
+
+await tlsn.initialize(); // Load WASM
+
+const result = await tlsn.attest({
+    url: 'https://api.example.com/data',
+    method: 'GET',
+    headers: { 'Accept': 'application/json' },
+});
+```
+
+### attest() Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | string | Yes | The target HTTPS URL to attest |
+| `method` | "GET" \| "POST" | No | HTTP method (default: "GET") |
+| `headers` | Record<string, string> | No | Custom headers to include |
+| `body` | string | No | Request body for POST requests |
+| `commit` | CommitRanges | No | Byte ranges to include in proof |
+| `maxSentData` | number | No | Max sent data in bytes (default: 16384) |
+| `maxRecvData` | number | No | Max receive data in bytes (default: 16384) |
+
+### attest() Response
+
+```typescript
+interface AttestResult {
+    presentation: PresentationJSON;  // The proof data
+    sent: string;                    // Sent request data
+    recv: string;                    // Received response data
+    time: number;                    // Attestation timestamp
+    serverName: string;              // Server hostname
+}
+```
+
+### verify()
+
+Verify an attestation proof:
+
+```typescript
+const result = await tlsn.verify(presentationJSON);
+// result: { time, serverName, sent, recv, notaryKey, verifyingKey }
+```
+
+## Wallet Extension Integration
+
+For production dApps, users connect via wallet extensions which handle key management. The SDK supports a 3-step flow for wallet extensions:
+
+### The 3-Step Wallet Flow
+
+1. **Generate Transaction**: Create the unsigned transaction
+2. **Sign & Confirm**: Send to wallet extension for user approval and signing
+3. **Broadcast**: Send the signed transaction to the network
+
+The `WithConfirmation` methods implement this pattern:
+
+```typescript
+// Example: Full attestation with wallet extension flow
+const service = new TLSNotaryService(demos);
+
+// Step 1 & 2: Generate and get user confirmation
+const { tlsn, tokenId } = await service.createTLSNotaryWithConfirmation(
+    { targetUrl: 'https://api.example.com/data' },
+    {
+        onConfirm: async (details) => {
+            // In a dApp, this would show a modal to the user:
+            // "Confirm burning 1 DEM for attestation?"
+            // The wallet extension signs when user approves
+            return await walletExtension.requestApproval(details.transaction);
+        }
+    }
+);
+
+// Step 3: Perform attestation (no blockchain interaction)
+const result = await tlsn.attest({ url: 'https://api.example.com/data' });
+
+// Step 1 & 2 again: Store proof with confirmation
+await service.storeProofWithConfirmation(
+    tokenId,
+    JSON.stringify(result.presentation),
+    { storage: 'onchain' },
+    {
+        onConfirm: async (details) => {
+            // "Confirm burning 6 DEM to store proof?"
+            return await walletExtension.requestApproval(details.transaction);
+        }
+    }
+);
+```
+
+### Custom Headers
+
+```typescript
+const result = await tlsn.attest({
     url: "https://api.example.com/data",
     headers: {
         "Authorization": "Bearer your-token",
         "X-Custom-Header": "value"
     }
-})
+});
 ```
 
-#### POST Requests
+### POST Requests
 
 ```typescript
-const result = await demos.web2.requestTlsn({
+const result = await tlsn.attest({
     url: "https://api.example.com/submit",
     method: "POST",
     headers: {
         "Content-Type": "application/json"
     },
     body: JSON.stringify({ key: "value" })
-})
+});
 ```
 
-#### Selective Redaction
+### Commit Ranges (Selective Disclosure)
 
-Redact sensitive fields from the proof while still proving the response structure:
+Control which parts of the request/response to include in the proof:
 
 ```typescript
-const result = await demos.web2.requestTlsn({
-    url: "https://api.bank.com/account",
-    redactions: [
-        "$.accountNumber",      // Redact account number
-        "$.transactions[*].id", // Redact all transaction IDs
-        "$.ssn"                 // Redact SSN
-    ]
-})
+const result = await tlsn.attest({
+    url: "https://api.example.com/data",
+    commit: {
+        sent: [{ start: 0, end: 100 }],  // Include first 100 bytes of request
+        recv: [{ start: 0, end: 500 }],  // Include first 500 bytes of response
+    }
+});
 ```
 
-### Verification
-
-Proofs can be verified by any party with the proof data:
-
-```typescript
-// Retrieve proof from chain
-const proofData = await demos.getProof(proofHash)
-
-// Verify proof integrity
-const isValid = await demos.web2.verifyTlsnProof(proofData)
-
-// Extract attested data
-const attestedData = await demos.web2.extractTlsnData(proofData)
-```
+<Warning>
+Larger commit ranges result in larger proofs, which increase storage costs. Only include the data you need to prove.
+</Warning>

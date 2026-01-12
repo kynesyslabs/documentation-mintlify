@@ -807,16 +807,46 @@ Open http://localhost:3000 in your browser.
 
 ## Production Considerations
 
-### Wallet Connection
+### Wallet Extension Integration
 
-For production applications, use the Demos Wallet Extension instead of direct mnemonic input:
+For production applications, use the Demos Wallet Extension instead of direct mnemonic input. The wallet extension handles the 3-step transaction flow:
+
+1. **Generate Transaction** - SDK creates the transaction
+2. **Sign & Confirm** - User approves in wallet extension
+3. **Broadcast** - Wallet sends signed transaction to network
 
 ```typescript
-// Replace this:
-await demosInstance.connectWallet(mnemonic);
-
-// With this:
+// Connect via wallet extension (instead of mnemonic)
 await demosInstance.connectWalletExtension();
+
+// Use WithConfirmation methods for wallet extension apps
+const { tlsn, tokenId } = await tlsnService.createTLSNotaryWithConfirmation(
+  { targetUrl },
+  {
+    onConfirm: async (details) => {
+      // In production: wallet extension shows approval UI
+      // details.transaction contains the unsigned tx
+      // details.amount shows fee (1 DEM for attestation)
+      return await walletExtension.requestApproval(details.transaction);
+    }
+  }
+);
+
+// Perform attestation (no blockchain transaction needed)
+const result = await tlsn.attest({ url: targetUrl });
+
+// Store proof with user confirmation
+await tlsnService.storeProofWithConfirmation(
+  tokenId,
+  JSON.stringify(result.presentation),
+  { storage: 'onchain' },
+  {
+    onConfirm: async (details) => {
+      // details.amount shows storage fee (1 + size_kb DEM)
+      return await walletExtension.requestApproval(details.transaction);
+    }
+  }
+);
 ```
 
 The Wallet Extension provides better security as the mnemonic never leaves the extension.

@@ -13,18 +13,30 @@ TLSNotary enables powerful use cases where you need to prove web content without
 Prove your account balance or financial status without revealing sensitive details:
 
 ```typescript
-// Prove balance without revealing account number
-const result = await demos.web2.requestTlsn({
+import { TLSNotaryService } from '@kynesyslabs/demosdk/tlsnotary';
+
+const service = new TLSNotaryService(demos);
+
+// Request token and get TLSNotary instance
+const { tlsn, tokenId } = await service.createTLSNotary({
+    targetUrl: "https://api.bank.com/v1/accounts/balance"
+});
+
+// Perform attestation with selective disclosure
+const result = await tlsn.attest({
     url: "https://api.bank.com/v1/accounts/balance",
     headers: {
         "Authorization": `Bearer ${bankToken}`
     },
-    redactions: [
-        "$.accountNumber",
-        "$.routingNumber",
-        "$.transactionHistory"
-    ]
-})
+    // Only include the balance portion in the proof
+    commit: {
+        sent: [{ start: 0, end: 100 }],
+        recv: [{ start: 0, end: 200 }]  // Just the balance field
+    }
+});
+
+// Store proof on-chain
+await service.storeProof(tokenId, JSON.stringify(result.presentation), { storage: 'onchain' });
 
 // The proof shows: { balance: 15000.00, currency: "USD" }
 // Hidden: Account number, routing number, transaction details
@@ -40,13 +52,20 @@ const result = await demos.web2.requestTlsn({
 Prove account ownership on web services without sharing credentials:
 
 ```typescript
-// Prove Twitter account ownership
-const result = await demos.web2.requestTlsn({
+const service = new TLSNotaryService(demos);
+
+// Request attestation token and TLSNotary instance
+const { tlsn, tokenId } = await service.createTLSNotary({
+    targetUrl: "https://api.twitter.com/2/users/me"
+});
+
+// Perform attestation
+const result = await tlsn.attest({
     url: "https://api.twitter.com/2/users/me",
     headers: {
         "Authorization": `Bearer ${twitterToken}`
     }
-})
+});
 
 // Proves: You control @username with id 123456
 // Verifiable: Anyone can verify the proof
@@ -62,10 +81,17 @@ const result = await demos.web2.requestTlsn({
 Create verifiable proofs of API responses for smart contracts or off-chain verification:
 
 ```typescript
+const service = new TLSNotaryService(demos);
+
+// Request token
+const { tlsn, tokenId } = await service.createTLSNotary({
+    targetUrl: "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+});
+
 // Attest cryptocurrency price at a specific moment
-const result = await demos.web2.requestTlsn({
+const result = await tlsn.attest({
     url: "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-})
+});
 
 // Proves: BTC = $67,543.21 at timestamp 1704067200
 // Use: Oracle data, price verification, historical proof
@@ -81,19 +107,24 @@ const result = await demos.web2.requestTlsn({
 Prove employment status or income without revealing full details:
 
 ```typescript
+const service = new TLSNotaryService(demos);
+
+const { tlsn, tokenId } = await service.createTLSNotary({
+    targetUrl: "https://api.hr-platform.com/v1/employee/status"
+});
+
 // Prove employment at a company
-const result = await demos.web2.requestTlsn({
+const result = await tlsn.attest({
     url: "https://api.hr-platform.com/v1/employee/status",
     headers: {
         "Authorization": `Bearer ${employeeToken}`
     },
-    redactions: [
-        "$.salary",
-        "$.ssn",
-        "$.managerEmail",
-        "$.performanceReviews"
-    ]
-})
+    // Only commit the employment status portion, not salary or SSN
+    commit: {
+        sent: [{ start: 0, end: 100 }],
+        recv: [{ start: 0, end: 150 }]  // Just employment status fields
+    }
+});
 
 // Proves: Employed at Company X, Role: Engineer, Since: 2022
 // Hidden: Salary, SSN, performance data
@@ -104,11 +135,17 @@ const result = await demos.web2.requestTlsn({
 Prove gaming achievements or statistics:
 
 ```typescript
+const service = new TLSNotaryService(demos);
+
+const { tlsn, tokenId } = await service.createTLSNotary({
+    targetUrl: "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1"
+});
+
 // Prove Steam achievements
-const result = await demos.web2.requestTlsn({
+const result = await tlsn.attest({
     url: "https://api.steampowered.com/ISteamUserStats/GetPlayerAchievements/v1",
     headers: { "key": steamApiKey }
-})
+});
 
 // Proves: Player has achievement X in game Y
 // Use: NFT minting, tournament eligibility, rewards
@@ -121,20 +158,24 @@ const result = await demos.web2.requestTlsn({
 const dahrResult = await dahr.startProxy({
     url: "https://api.example.com/public-data",
     method: "GET"
-})
+});
 // Speed: ~500ms
 // On-chain: Hash of response
 // Privacy: Full response visible to proxy
 // Cost: Gas only
 
 // TLSNotary - Cryptographic proof, sensitive data
-const tlsnResult = await demos.web2.requestTlsn({
+const service = new TLSNotaryService(demos);
+const { tlsn, tokenId } = await service.createTLSNotary({
+    targetUrl: "https://api.example.com/private-data"
+});
+const result = await tlsn.attest({
     url: "https://api.example.com/private-data",
-    redactions: ["$.sensitiveField"]
-})
+    commit: { recv: [{ start: 0, end: 100 }] }  // Selective disclosure
+});
 // Speed: 2-5s
 // On-chain: Proof metadata only
-// Privacy: Selective disclosure possible
+// Privacy: Selective disclosure via commit ranges
 // Cost: 1+ DEM + gas
 ```
 
