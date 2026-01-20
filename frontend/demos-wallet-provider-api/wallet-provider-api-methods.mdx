@@ -328,3 +328,49 @@ const res = await provider.request({
   params: [signingAddress, signature, challengeRes.data, resolutionRes.data, 'REFERRAL123'],
 });
 ```
+
+### Nomis Score
+
+#### getNomisScore
+
+* **Params**: `[ walletAddress: string, chain: string ]`
+* **Behavior**: fetches the Nomis score for the specified wallet address on the given chain.
+* **Success data**: Nomis score response object
+* **Errors**: `getNomisScoreError`
+
+Example:
+
+```ts
+const res = await provider.request({
+  method: 'getNomisScore',
+  params: ['0xabc...', 'evm'], // chain: 'evm' or 'solana'
+});
+```
+
+#### addNomisIdentity
+
+* **Params**: `[ payload: NomisWalletIdentity ]`
+* **Behavior**: validates Nomis identity and prompts user in validation popup; upon confirmation broadcasts.
+* **Success data**: `{ result, validityData }`
+* **Errors**: `addNomisIdentityError`, `addNomisIdentityCancelled`, `TIMEOUT`
+
+Example:
+
+```ts
+const payload = {/* NomisWalletIdentity from SDK */};
+const res = await provider.request({ method: 'addNomisIdentity', params: [payload] });
+```
+
+#### removeNomisIdentity
+
+* **Params**: `[ payload: NomisWalletIdentity ]`
+* **Behavior**: creates removal validity data and prompts user in validation popup; upon confirmation broadcasts.
+* **Success data**: `{ result, validityData }`
+* **Errors**: `removeNomisIdentityError`, `removeNomisIdentityCancelled`, `TIMEOUT`
+
+Example:
+
+```ts
+const payload = {/* NomisWalletIdentity to remove */};
+const res = await provider.request({ method: 'removeNomisIdentity', params: [payload] });
+```
