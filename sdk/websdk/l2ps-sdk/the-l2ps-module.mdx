@@ -1,41 +1,106 @@
 ---
-title: "The L2Ps Module"
-description: "To standardize this guide, it is advised to always import the `l2ps`module with:"
+title: "The L2PS Module"
+description: "Initialize and configure the L2PS encryption module for private transactions."
 icon: "key-skeleton-left-right"
 ---
 
-# The l2ps module
+# The L2PS Module
 
-To standardize this guide, it is advised to always import the `l2ps`module with:
+The L2PS module provides client-side encryption for private transactions on the Demos Network.
 
-```typescript
-import { l2ps } from "@kynesyslabs/demosdk"
-```
-
-Once you have done this, you will be able to access the module classes and methods.
-
-### Creating a new L2PS
-
-You can easily create a new L2PS instance with:
+## Installation
 
 ```typescript
-var instance = new l2ps.L2PS()
+import { L2PSEncryption } from "@kynesyslabs/demosdk/l2ps"
 ```
 
-Which will generate the keys for the Subnet and return an instance of it.
+## Initialization
 
-### Using a pre-existing L2PS
+To use L2PS, you need the **shared encryption keys** for your L2PS network:
 
-To use a pre-existing L2PS, one must first obtain the RSA Private Key for the Subnet. This acts like a certification of participation to the Subnet.
+```typescript
+// Keys must match the L2PS network configuration
+const aesKey = "your_64_character_hex_aes_256_key..."
+const iv = "your_32_character_hex_iv..."
+const l2psUid = "testnet_l2ps_001"
+
+// Create L2PS encryption instance
+const l2ps = new L2PSEncryption(aesKey, iv)
+```
 
 <Warning>
-This private key won't be sent to the node and will remain completely offline for the whole time.
+**Critical**: The AES key and IV must **exactly match** the keys configured on the L2PS network nodes. If there's any mismatch, transactions will fail to decrypt on the node side.
 </Warning>
 
-Once obtained, you can create an instance of that L2PS with:
+## Configuration Options
 
-```typescript
-var instance = new l2ps.L2PS(RSAPrivateKey)
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `aesKey` | `string` | 64-character hex string (256-bit AES key) |
+| `iv` | `string` | 32-character hex string (128-bit initialization vector) |
+
+## Key Generation
+
+If you're setting up a new L2PS network, generate keys using OpenSSL:
+
+```bash
+# Generate AES-256 key (32 bytes = 64 hex characters)
+openssl rand -hex 32 > private_key.txt
+
+# Generate IV (16 bytes = 32 hex characters)
+openssl rand -hex 16 > iv.txt
 ```
 
-Where `RSAPrivateKey`is the above-mentioned secret.
+## Encryption Details
+
+The L2PS module uses **AES-256-CBC** encryption:
+
+<CardGroup cols={2}>
+  <Card title="AES-256" icon="lock">
+    Industry-standard symmetric encryption with 256-bit key security.
+  </Card>
+  <Card title="CBC Mode" icon="layer-group">
+    Cipher Block Chaining provides semantic security for variable-length messages.
+  </Card>
+</CardGroup>
+
+### What Gets Encrypted
+
+```typescript
+// This inner transaction is encrypted
+const innerTx = {
+  type: "native",
+  from: "0xSender...",
+  to: "0xRecipient...",
+  amount: 10,
+  nonce: 5,
+  timestamp: Date.now()
+}
+
+// The encrypted blob is wrapped in outer L2PS transaction
+const l2psTx = {
+  type: "l2ps",
+  to: l2psUid,      // L2PS network identifier
+  data: encryptedBlob  // Encrypted inner transaction
+}
+```
+
+## Key Matching Requirement
+
+<Info>
+**For POC App Users**: Copy keys directly from your node's L2PS configuration:
+
+```bash
+# From your Demos node directory, view key contents
+cat data/l2ps/testnet_l2ps_001/private_key.txt
+cat data/l2ps/testnet_l2ps_001/iv.txt
+```
+
+Then paste these values into your POC app's `.env` file as `VITE_L2PS_AES_KEY` and `VITE_L2PS_IV`.
+</Info>
+
+## Next Steps
+
+<Card title="Interacting with L2PS" icon="paper-plane" href="./interacting-with-the-l2ps">
+  Learn how to send encrypted transactions and query history
+</Card>

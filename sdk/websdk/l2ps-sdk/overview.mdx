@@ -1,13 +1,91 @@
 ---
-title: "L2Ps Sdk"
-description: "The L2PS module in the WebSDK simplifies the process for developers to handle, link, and engage with L2PS Subnets within the Demos Network."
-icon: "xmark-large"
+title: "L2PS SDK Overview"
+description: "The L2PS module in the WebSDK enables developers to send private, encrypted transactions on the Demos Network."
+icon: "shield-halved"
 ---
 
 # L2PS SDK
 
-The L2PS module in the WebSDK simplifies the process for developers to handle, link, and engage with L2PS Subnets within the Demos Network.
+The L2PS module in the WebSDK provides a complete toolkit for **private transactions** on the Demos Network. Transactions are encrypted client-side using **AES-256** before being sent to L2PS-participating nodes.
 
-You can reference [l2ps-subnet-framework](../../../backend/l2ps-subnet-framework/) to learn how Subnets work within the Demos Network.
+## Key Features
 
-In this chapter, we will focus on the L2PS class as exposed by the SDK in the `l2ps`module.
+<CardGroup cols={2}>
+  <Card title="Client-Side Encryption" icon="lock">
+    Transactions encrypted in your browser with AES-256-CBC before transmission.
+  </Card>
+  <Card title="Authenticated History" icon="key">
+    Only address owners can access their transaction history via signatures.
+  </Card>
+  <Card title="Transaction Lifecycle" icon="arrows-rotate">
+    Track transactions through Executed → Batched → Confirmed stages.
+  </Card>
+  <Card title="Simple Integration" icon="plug">
+    Drop-in replacement for standard L1 transactions with privacy.
+  </Card>
+</CardGroup>
+
+## How It Works
+
+<Steps>
+  <Step title="Generate Keys">
+    Initialize L2PS module with shared AES key and IV matching the L2PS network.
+  </Step>
+  <Step title="Encrypt Transaction">
+    SDK encrypts your transaction data client-side before sending.
+  </Step>
+  <Step title="Send to Network">
+    Encrypted blob sent to L2PS node which decrypts and validates.
+  </Step>
+  <Step title="Track Status">
+    Monitor transaction through executed → batched → confirmed lifecycle.
+  </Step>
+</Steps>
+
+## Transaction Lifecycle
+
+| Status | Description | Timing |
+|--------|-------------|--------|
+| **Executed** | Node validated, balance reserved | Instant |
+| **Batched** | Included in L1 batch with ZK proof | Per L1 block |
+| **Confirmed** | L1 block finalized | Final |
+
+## Quick Reference
+
+```typescript
+import { L2PSEncryption, L2PSService } from '@kynesyslabs/demosdk/l2ps'
+
+// Initialize with L2PS network keys
+const l2ps = new L2PSEncryption(aesKey, iv)
+
+// Encrypt and send transaction
+const encrypted = l2ps.encrypt({
+  type: "native",
+  from: "0xSender...",
+  to: "0xRecipient...",
+  amount: 10
+})
+
+// Send to L2PS network
+const result = await L2PSService.sendTransaction(
+  nodeUrl,
+  l2psUid,
+  encrypted,
+  signature
+)
+```
+
+## Getting Started
+
+<CardGroup cols={2}>
+  <Card title="The L2PS Module" icon="code" href="./the-l2ps-module">
+    Learn how to initialize and configure the L2PS module
+  </Card>
+  <Card title="Interacting with L2PS" icon="paper-plane" href="./interacting-with-the-l2ps">
+    Send transactions and query history
+  </Card>
+</CardGroup>
+
+<Info>
+For backend implementation details, see the [L2PS Subnet Framework](/backend/l2ps-subnet-framework/overview).
+</Info>

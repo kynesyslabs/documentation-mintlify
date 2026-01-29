@@ -235,8 +235,8 @@ const result = await tlsn.attest({
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `url` | string | Yes | The target HTTPS URL to attest |
-| `method` | "GET" \| "POST" | No | HTTP method (default: "GET") |
-| `headers` | Record<string, string> | No | Custom headers to include |
+| `method` | `"GET"` or `"POST"` | No | HTTP method (default: "GET") |
+| `headers` | `Record<string, string>` | No | Custom headers to include |
 | `body` | string | No | Request body for POST requests |
 | `commit` | CommitRanges | No | Byte ranges to include in proof |
 | `maxSentData` | number | No | Max sent data in bytes (default: 16384) |
