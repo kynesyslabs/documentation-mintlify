@@ -1,0 +1,108 @@
+---
+title: "ZK API Reference"
+description: "Transaction types and data structures for ZK Identity."
+icon: "code"
+---
+
+# API Reference
+
+## Transaction Structure
+
+ZK Identity operations use standard `native` transactions with specific payloads.
+
+### Identity Commitment
+
+Used to link an identity (Phase 1).
+
+```typescript
+{
+    type: 'identity_commitment',
+    payload: {
+        /** Poseidon(provider_id, secret) */
+        commitment_hash: string,
+        
+        /** Provider type: 'github', 'telegram', etc. */
+        provider: string,
+        
+        /** Timestamp of creation */
+        timestamp: number
+    }
+}
+```
+
+### Identity Attestation
+
+Used to prove ownership without revealing identity (Phase 2).
+
+```typescript
+{
+    type: 'identity_attestation',
+    payload: {
+        /** Poseidon(provider_id, context) - prevents double-spending */
+        nullifier_hash: string,
+        
+        /** Merkle root against which proof is verified */
+        merkle_root: string,
+        
+        /** The ZK Proof (Groth16) */
+        proof: {
+            pi_a: string[],
+            pi_b: string[][],
+            pi_c: string[],
+            protocol: string
+        },
+        
+        /** Public signals: [nullifier, merkle_root] */
+        public_signals: string[],
+        
+        /** Provider type (for categorization only) */
+        provider: string
+    }
+}
+```
+
+## Data Types
+
+### IdentityProofCircuitInput
+
+**CRITICAL SECURITY**: These inputs are used locally to generate the proof and verify the `commitment`.
+
+```typescript
+interface IdentityProofCircuitInput {
+    // Private Inputs (Witness)
+    provider_id: string    // Your provider ID
+    secret: string         // Your local secret
+    path_elements: string[] // Merkle path siblings
+    path_indices: number[]  // Merkle path indices
+    
+    // Public Inputs
+    context: string        // Action context (e.g. "voting_proposal_1")
+    merkle_root: string    // Current tree root
+}
+```
+
+### MerkleProofResponse
+
+Response from the node when requesting a Merkle proof for a commitment.
+
+```typescript
+interface MerkleProofResponse {
+    proof: {
+        siblings: string[]
+        path_indices: number[]
+        root: string
+        leaf: string
+    }
+    leaf_index: number
+}
+```
+
+## Database Schema
+
+The system uses specific tables to track commitments and nullifiers.
+
+| Table | Description | Key Fields |
+|-------|-------------|------------|
+| `identity_commitments` | Stores valid commitments | `commitment_hash`, `leaf_index` |
+| `used_nullifiers` | Tracks used nullifiers to prevent double-spending | `nullifier_hash` |
+| `merkle_tree_state` | Snapshots of the Merkle Tree | `root_hash`, `leaf_count` |

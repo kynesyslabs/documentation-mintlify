@@ -315,6 +315,15 @@
             ]
           },
           {
+            "group": "ZK Identity",
+            "icon": "fingerprint",
+            "pages": [
+              "backend/zk-identity/overview",
+              "backend/zk-identity/setup",
+              "backend/zk-identity/api-reference"
+            ]
+          },
+          {
             "group": "Architecture",
             "icon": "sitemap",
             "pages": [

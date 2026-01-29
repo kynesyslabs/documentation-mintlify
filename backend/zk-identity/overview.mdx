@@ -1,0 +1,89 @@
+---
+title: "ZK Identity Overview"
+description: "Privacy-preserving identity attestation using zero-knowledge proofs and nullifiers."
+icon: "fingerprint"
+---
+
+# ZK Identity System
+
+The ZK Identity System provides a privacy-preserving way to attest to an identity (e.g., verifying you are a Github user) without revealing the specific identity or linking multiple actions to the same user.
+
+It uses **Zero-Knowledge Proofs (ZK-SNARKs)** to guarantee:
+1.  **Privacy**: No one knows which user performed an action.
+2.  **Uniqueness**: A user cannot double-spend an action in the same context (via Nullifiers).
+3.  **Soundness**: Mathematical proof of validity.
+
+## Core Concepts
+
+<CardGroup cols={2}>
+  <Card title="Commitment" icon="lock">
+    `Poseidon(provider_id, secret)`
+    A cryptographic commitment to an identity, stored on-chain in a Merkle Tree. It hides the user's ID and secret.
+  </Card>
+  <Card title="Nullifier" icon="slash">
+    `Poseidon(provider_id, context)`
+    A unique hash generated for a specific action (context). Prevents double-spending while maintaining anonymity.
+  </Card>
+  <Card title="Merkle Tree" icon="sitemap">
+    A valid commitment must exist in the global Merkle Tree. The ZK proof verifies inclusion in this tree.
+  </Card>
+  <Card title="ZK Proof" icon="shield-check">
+    A Groth16 proof that asserts: "I know a secret corresponding to a commitment in the Merkle Tree, and here is my unique nullifier for this context."
+  </Card>
+</CardGroup>
+
+## Architecture Overview
+
+The system operates in a **Two-Phase Flow**:
+
+### Phase 1: Link Identity (One-time)
+
+<Steps>
+  <Step title="Generate Secret">
+    User generates a random secret locally. This never leaves their device.
+  </Step>
+  <Step title="Create Commitment">
+    User calculates commitment: `Hash(provider_id, secret)`.
+  </Step>
+  <Step title="Submit to Chain">
+    User submits the commitment to the blockchain via an `identity_commitment` transaction.
+  </Step>
+  <Step title="Merkle Update">
+    Validators verify the transaction and add the commitment to the global Merkle Tree.
+  </Step>
+</Steps>
+
+### Phase 2: Prove Ownership (Repeatable)
+
+When a user wants to perform an action (e.g., vote, claim airdrop) anonymously:
+
+<Steps>
+  <Step title="Generate Proof">
+    User uses their secret and the current Merkle path to generate a ZK proof locally.
+  </Step>
+  <Step title="Calculate Nullifier">
+    User calculates a nullifier based on the action context: `Hash(provider_id, context)`.
+  </Step>
+  <Step title="Submit Attestation">
+    User submits `identity_attestation` transaction with the proof and nullifier.
+  </Step>
+  <Step title="Verification">
+    Validators verify the proof against the current Merkle root and checking if the nullifier has been used before.
+  </Step>
+</Steps>
+
+## Privacy Model
+
+| Component | Visibility | Description |
+|-----------|------------|-------------|
+| **Provider ID** | 🔒 Private | Hidden inside commitment and ZK proof |
+| **User Secret** | 🔒 Private | Known only to user, never transmitted |
+| **Commitment** | 🌍 Public | Visible on-chain, but opaque |
+| **Nullifier** | 🌍 Public | Visible on-chain, used for uniqueness check |
+| **Context** | 🌍 Public | The specific action being performed |
+
+## Security Guarantees
+
+*   **Anonymity Set**: All users across all providers in the Merkle Tree.
+*   **Unlinkability**: No link between the commitment (Phase 1) and the attestation (Phase 2).
+*   **Double-Spend Protection**: The nullifier guarantees a user can only act once per context.

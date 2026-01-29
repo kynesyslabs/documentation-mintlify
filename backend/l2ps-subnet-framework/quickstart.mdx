@@ -68,9 +68,7 @@ curl -Ls https://scrypt.io/scripts/setup-circom.sh | sh
 ### Generate ZK Keys
 
 ```bash
-cd src/libs/l2ps/zk/scripts
-./setup_all_batches.sh
-cd ../../../..  # Return to project root
+npm run l2ps:zk:setup
 ```
 
 This generates:
@@ -204,7 +202,7 @@ For 50 transactions:
     Remember: L2PS requires `amount + 1 DEM` fee. Fund wallet first.
   </Accordion>
   <Accordion title="ZK Prover not available">
-    Run `src/libs/l2ps/zk/scripts/setup_all_batches.sh`. System works without ZK (graceful degradation).
+    Run `npm run l2ps:zk:setup`. System works without ZK (graceful degradation).
   </Accordion>
 </AccordionGroup>
 
@@ -219,7 +217,7 @@ openssl rand -hex 16 > data/l2ps/testnet_l2ps_001/iv.txt
 # 2. Create config.json (see section 1)
 
 # 3. Optional: Setup ZK proofs
-cd src/libs/l2ps/zk/scripts && ./setup_all_batches.sh && cd ../../../..  # Return to project root
+npm run l2ps:zk:setup
 
 # 4. Start node
 ./run
