@@ -1,0 +1,87 @@
+---
+title: "ZK Setup Guide"
+description: "How to setup and generate ZK keys for the Identity System."
+icon: "wrench"
+---
+
+# Setup Instructions
+
+This guide explains how to set up the ZK circuits and keys required for the ZK Identity System.
+
+<Note>
+**Validators**: You must use the verification keys committed in the repository to ensure consensus compatibility.
+</Note>
+
+## Prerequisites
+
+- Bun runtime
+- Dependencies installed (`bun install`)
+
+## Quick Setup
+
+Run the automated setup script to download the Powers of Tau ceremony file, compile circuits, and generate keys:
+
+```bash
+bun run zk:setup-all
+```
+
+This process will:
+1.  Download Powers of Tau file (~140MB)
+2.  Compile Circom circuits
+3.  Generate proving (`.zkey`) and verification keys
+
+## Directory Structure
+
+The ZK files are located in `src/features/zk/`:
+
+```
+src/features/zk/
+├── circuits/           # Source .circom files
+├── keys/               # Generated keys (.zkey, .json)
+├── proof/              # Proof generation logic
+└── scripts/            # Setup scripts
+```
+
+## Git Policy
+
+<Warning>
+**Strict Commit Rules**
+
+*   ✅ **COMMIT**: `circuits/*.circom`, `keys/verification_key.json`
+*   ❌ **DO NOT COMMIT**: `keys/*.zkey`, `keys/*.ptau`, `*.r1cs`, `*.wasm`
+</Warning>
+
+The `verification_key.json` is the trust anchor. All nodes must use the exact same file to verify proofs correctly.
+
+## Manual Steps
+
+If you need to run steps manually:
+
+### 1. Download Powers of Tau
+
+```bash
+cd src/features/zk/keys/
+curl -L -o powersOfTau28_hez_final_14.ptau \
+  https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_14.ptau
+```
+
+### 2. Compile Circuits
+
+```bash
+bun run zk:compile
+```
+
+### 3. Generate Keys
+
+```bash
+# Generate proving key
+npx snarkjs groth16 setup \
+  src/features/zk/circuits/identity.r1cs \
+  src/features/zk/keys/powersOfTau28_hez_final_14.ptau \
+  src/features/zk/keys/identity_0000.zkey
+
+# Export verification key
+npx snarkjs zkey export verificationkey \
+  src/features/zk/keys/identity_0000.zkey \
+  src/features/zk/keys/verification_key.json
+```

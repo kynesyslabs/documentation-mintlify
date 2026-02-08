@@ -1,45 +1,242 @@
 ---
-title: "Interacting With The L2Ps"
-description: "The `l2ps`module exposes various methods to easily interact with on-chain Subnets."
+title: "Interacting with L2PS"
+description: "Send private transactions and query authenticated history using the L2PS SDK."
 icon: "network-wired"
 ---
 
-# Interacting with the L2PS
+# Interacting with L2PS
 
-The `l2ps`module exposes various methods to easily interact with on-chain Subnets.
+This guide covers sending private transactions and accessing transaction history through the L2PS SDK.
 
-As Subnets are always registered on the Demos Network, their data is publicly available. Due to the strong encryption, anyway, only their members are able to decrypt and view the content of that data.
+## Sending Private Transactions
 
-This mechanism is crucial to ensure data integrity while not compromising privacy and security.
+### Basic Transaction
 
-For this reason, once a Subnet instance is created, it will be able to interact with the on-chain data pertaining to that specific Subnet.
+```typescript
+import { L2PSEncryption, L2PSService } from '@kynesyslabs/demosdk/l2ps'
+import { Wallet } from '@kynesyslabs/demosdk'
 
-All the following methods are to be called from the `L2PS`class instance you created in the previous step (for example: `await instance.getParticipatingNodes()`).
+// Initialize wallet and L2PS
+const wallet = new Wallet(mnemonic)
+const l2ps = new L2PSEncryption(aesKey, iv)
+
+// Create inner transaction
+const innerTx = {
+  type: "native",
+  from: wallet.address,
+  to: "0xRecipient...",
+  amount: 10,
+  nonce: await getNextNonce(wallet.address),
+  timestamp: Date.now()
+}
+
+// Sign the inner transaction
+const signature = await wallet.signTransaction(innerTx)
+
+// Encrypt the transaction
+const encryptedBlob = l2ps.encrypt(innerTx)
+
+// Send to L2PS network
+const result = await L2PSService.sendTransaction({
+  nodeUrl: "http://127.0.0.1:53550",
+  l2psUid: "testnet_l2ps_001",
+  encryptedData: encryptedBlob,
+  signature: signature,
+  from: wallet.address
+})
+
+console.log("Transaction hash:", result.hash)
+console.log("Status:", result.status)  // "executed"
+```
+
+### Transaction with Fee
 
 <Info>
-This section mainly explains the primitives to interact with a L2PS Subnet. In the following chapters, we will see more high level modules using this class to expose features in a user-friendly way.
+Every L2PS transaction costs **1 DEM** as a flat fee. Ensure the sender has `amount + 1 DEM` available.
 </Info>
 
-### getParticipatingNodes
+```typescript
+// For a 10 DEM transfer, sender needs at least 11 DEM
+const amount = 10
+const fee = 1
+const requiredBalance = amount + fee
 
-This method retrieves the members, also called nodes, of the Subnet instance updated to the last block.
+// Check balance first
+const balance = await getBalance(wallet.address)
+if (balance < requiredBalance) {
+  throw new Error(`Insufficient balance: need ${requiredBalance}, have ${balance}`)
+}
+```
 
-_Arguments_: None
+## Fetching Transaction History
 
-_Returns_: `Promise<Map<string, string>>`
+L2PS transaction history requires **authenticated access** - only the address owner can view their transactions.
 
-### getTx
+### Authenticated History Request
 
-This method retrieves an encrypted transaction from the on-chain Subnet, decrypts it and returns the plain Transaction.
+```typescript
+// Create authentication signature
+const timestamp = Date.now()
+const message = `getL2PSHistory:${wallet.address}:${timestamp}`
+const authSignature = await wallet.signMessage(message)
 
-_Arguments_:`eHash: string // the hash of the encrypted transaction`
+// Request history
+const history = await L2PSService.getAccountTransactions({
+  nodeUrl: "http://127.0.0.1:53550",
+  l2psUid: "testnet_l2ps_001",
+  address: wallet.address,
+  timestamp: timestamp,
+  signature: authSignature
+})
 
-_Returns_: `Promise<Transaction>`
+// Process transactions
+for (const tx of history) {
+  console.log(`${tx.hash}: ${tx.from} → ${tx.to} (${tx.amount} DEM) [${tx.status}]`)
+}
+```
 
-### registerTx
+<Warning>
+If the signature doesn't match the requested address, the node returns **403 Access Denied**.
+</Warning>
 
-This method accepts a standard Demos Transaction, encrypts it using the L2PS Public Key and send it to the on-chain Subnet instance.
+## Checking Transaction Status
 
-_Arguments_: `tx: Transaction // A standard Demos Transaction`
+### Status Polling
 
-_Returns_: `Promise<string> // The eHash of the encrypted Transaction`
+```typescript
+async function waitForConfirmation(txHash: string, maxAttempts = 30) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const tx = await L2PSService.getTransaction(nodeUrl, l2psUid, txHash)
+    
+    if (tx.status === 'confirmed') {
+      console.log("Transaction confirmed!")
+      return tx
+    }
+    
+    console.log(`Status: ${tx.status} (attempt ${i + 1}/${maxAttempts})`)
+    await sleep(2000)  // Wait 2 seconds between checks
+  }
+  
+  throw new Error("Transaction not confirmed in time")
+}
+```
+
+### Status Meanings
+
+| Status | Description | What It Means |
+|--------|-------------|---------------|
+| `executed` | Validated locally | Balance reserved, awaiting batch |
+| `batched` | In L1 batch | Included in ZK-proven batch, awaiting block |
+| `confirmed` | L1 finalized | Transaction is permanent and immutable |
+
+## Error Handling
+
+### Common Errors
+
+```typescript
+try {
+  const result = await L2PSService.sendTransaction(...)
+} catch (error) {
+  switch (error.code) {
+    case 'DECRYPTION_FAILED':
+      console.error("Key mismatch - check AES key and IV match node config")
+      break
+    case 'INSUFFICIENT_BALANCE':
+      console.error("Need amount + 1 DEM for fee")
+      break
+    case 'INVALID_NONCE':
+      console.error("Transaction nonce already used")
+      break
+    case 'SIGNATURE_INVALID':
+      console.error("Transaction signature verification failed")
+      break
+    case 'L2PS_NOT_FOUND':
+      console.error("L2PS network UID not recognized by node")
+      break
+    default:
+      console.error("Unknown error:", error.message)
+  }
+}
+```
+
+### Key Mismatch Detection
+
+<Accordion title="Debugging Decryption Errors">
+If you see "DECRYPTION_FAILED" errors:
+
+1. **Verify key lengths**: AES key should be 64 hex chars, IV should be 32 hex chars
+2. **Check for whitespace**: Keys should have no trailing newlines or spaces
+3. **Compare with node**: Copy keys directly from node config files
+
+```bash
+# Check key format
+cat data/l2ps/testnet_l2ps_001/private_key.txt | wc -c  # Should be 64
+cat data/l2ps/testnet_l2ps_001/iv.txt | wc -c  # Should be 32
+```
+</Accordion>
+
+## Complete Example
+
+```typescript
+import { L2PSEncryption, L2PSService } from '@kynesyslabs/demosdk/l2ps'
+import { Wallet } from '@kynesyslabs/demosdk'
+
+async function sendPrivateTransaction() {
+  // Setup
+  const wallet = new Wallet(process.env.MNEMONIC)
+  const l2ps = new L2PSEncryption(
+    process.env.L2PS_AES_KEY,
+    process.env.L2PS_IV
+  )
+  const nodeUrl = process.env.NODE_URL
+  const l2psUid = process.env.L2PS_UID
+  
+  // Create and encrypt transaction
+  const innerTx = {
+    type: "native",
+    from: wallet.address,
+    to: "0xRecipient...",
+    amount: 5,
+    nonce: 1,
+    timestamp: Date.now()
+  }
+  
+  const signature = await wallet.signTransaction(innerTx)
+  const encrypted = l2ps.encrypt(innerTx)
+  
+  // Send
+  const result = await L2PSService.sendTransaction({
+    nodeUrl,
+    l2psUid,
+    encryptedData: encrypted,
+    signature,
+    from: wallet.address
+  })
+  
+  console.log("Sent:", result.hash)
+  
+  // Wait for confirmation
+  let status = result.status
+  while (status !== 'confirmed') {
+    await new Promise(r => setTimeout(r, 5000))
+    const tx = await L2PSService.getTransaction(nodeUrl, l2psUid, result.hash)
+    status = tx.status
+    console.log("Status:", status)
+  }
+  
+  console.log("Confirmed!")
+}
+
+sendPrivateTransaction().catch(console.error)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="L2PS Quick Start" icon="rocket" href="/backend/l2ps-subnet-framework/quickstart">
+    Set up a complete L2PS environment
+  </Card>
+  <Card title="L2PS Architecture" icon="sitemap" href="/backend/l2ps-subnet-framework/overview">
+    Understand the L2PS privacy model
+  </Card>
+</CardGroup>

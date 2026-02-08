@@ -1,41 +1,117 @@
 ---
-title: "L2Ps Subnet Framework"
-description: "An L2PS (or Demos Subnet) is a shard of Demos nodes that share a cryptographic secret such as an RSA keypair and is able to exchange private informati..."
-icon: "chart-network"
+title: "L2PS Subnet Framework"
+description: "Layer 2 Privacy Subnets provide encrypted, private transactions on top of the public L1 blockchain with batch rollups and ZK proofs."
+icon: "shield-halved"
 ---
 
-# L2PS (Subnet) Framework
+# L2PS (Layer 2 Privacy Subnet) Framework
 
-An L2PS (or Demos Subnet) is a shard of Demos nodes that share a cryptographic secret such as an RSA keypair and is able to exchange private informations across the network.
+L2PS is a privacy-preserving transaction layer that enables **encrypted transactions** on the Demos Network. Unlike public L1 transactions, L2PS transactions are encrypted client-side and only decrypted by authorized network participants.
 
-#### Why subnets
+## Key Features
 
-It is called a subnet because only the subnet partecipants are able to decode the messages. On top of this, only the subnet partecipants will store all the l2ps encrypted transactions, while the broader network will only store the hash of each l2ps encrypted transactions array to verify is consistent.
+<CardGroup cols={2}>
+  <Card title="Client-Side Encryption" icon="lock">
+    Transactions are encrypted with **AES-256** in your browser before leaving your device.
+  </Card>
+  <Card title="Batch Rollups" icon="layer-group">
+    Multiple L2PS transactions are bundled into a single L1 transaction per block.
+  </Card>
+  <Card title="ZK Proofs" icon="shield-check">
+    **PLONK** zero-knowledge proofs verify batch validity without revealing content.
+  </Card>
+  <Card title="Authenticated History" icon="key">
+    Only address owners can access their private transaction history via cryptographic signatures.
+  </Card>
+</CardGroup>
 
-This is ensured by a general Block class for the whole chain:
+## How It Works
 
-```typescript
-export interface BlockContent {
+### Transaction Flow
 
-	[...]
+<Steps>
+  <Step title="Client Encrypts">
+    Transaction is encrypted with shared **AES-256** key in the browser before transmission.
+  </Step>
+  <Step title="L2PS Node Decrypts">
+    Node receives encrypted blob, decrypts, validates signature and balance.
+  </Step>
+  <Step title="Batch Aggregator">
+    Bundles up to 10 transactions per L1 block with ZK proof.
+  </Step>
+  <Step title="L1 Submission">
+    Single L1 batch transaction submitted to blockchain.
+  </Step>
+</Steps>
 
-	l2ps_partecipating_nodes: Map<string, Map<string, string>> // ? "l2ps_uid": {"public_key": "connection_string"}
-	
-	l2ps_banned_nodes: Map<string, string> // ? "l2ps_uid": "public_key" (to implement)
-	
-	encrypted_transactions_hashes: Map<string, string> // ? "l2ps_uid": "hash"
+### Privacy Model
+
+| Component | L1 (Public) | L2PS (Private) |
+|-----------|-------------|----------------|
+| **Amount** | Visible to all | Encrypted |
+| **Recipient** | Visible to all | Encrypted |
+| **Sender** | Visible to all | Visible (outer tx) |
+| **History Access** | Anyone | Owner only (signature required) |
+
+## Transaction Lifecycle
+
+Every L2PS transaction progresses through three stages:
+
+<Steps>
+  <Step title="Executed" icon="bolt">
+    **Instant** - Local node decrypts, validates against L1 state, reserves balance.
+  </Step>
+  <Step title="Batched" icon="box">
+    **Per L1 block** - Transaction included in batch with ZK proof generated.
+  </Step>
+  <Step title="Confirmed" icon="check">
+    **Final** - L1 block confirmed, transaction is immutable on blockchain.
+  </Step>
+</Steps>
+
+## Transaction Fee
+
+<Info>
+Each L2PS transaction costs **1 DEM**. This creates a deflationary mechanism while ensuring fair access to privacy features.
+</Info>
+
+## Architecture Components
+
+| Component | Description |
+|-----------|-------------|
+| **L2PS Mempool** | Separate storage for encrypted transactions |
+| **Batch Aggregator** | Bundles transactions per L1 block (max 10 tx) |
+| **ZK Prover** | Generates PLONK proofs for batch validity |
+| **L2PS Consensus** | Applies GCR edits to L1 state |
+| **Hash Service** | Relays consolidated hashes to validators |
+
+## Network Participation
+
+To participate in an L2PS network, nodes must:
+
+1. Have the shared **AES-256 key** and **IV**
+2. Be configured with the correct **L2PS UID**
+3. Store and sync the L2PS mempool with other participants
+
+```json
+// L2PS Network Configuration
+{
+  "uid": "testnet_l2ps_001",
+  "enabled": true,
+  "keys": {
+    "private_key_path": "data/l2ps/testnet_l2ps_001/private_key.txt",
+    "iv_path": "data/l2ps/testnet_l2ps_001/iv.txt"
+  }
 }
 ```
 
-And an extension of the class specific for L2PS Partecipants:
+## Next Steps
 
-```typescript
-// Partecipating nodes to the L2PS will have the full transactions (encrypted) of the L2PS
-
-export interface L2PSBlockExtension extends BlockContent {
-
-	l2ps_transactions: EncryptedTransaction[]
-
-}
-```
-
+<CardGroup cols={2}>
+  <Card title="Transaction Handling" icon="arrows-rotate" href="./how-are-l2ps-transactions-handled">
+    Learn how L2PS transactions are processed
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="./quickstart">
+    Set up L2PS from scratch
+  </Card>
+</CardGroup>

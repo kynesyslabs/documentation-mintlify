@@ -134,22 +134,16 @@ npm install @kynesyslabs/demosdk
 
 ### Tabs
 
-```mdx
+```
 <Tabs>
   <Tab title="npm">
-    ```bash
     npm install @kynesyslabs/demosdk
-    ```
   </Tab>
   <Tab title="yarn">
-    ```bash
     yarn add @kynesyslabs/demosdk
-    ```
   </Tab>
   <Tab title="pnpm">
-    ```bash
     pnpm add @kynesyslabs/demosdk
-    ```
   </Tab>
 </Tabs>
 ```

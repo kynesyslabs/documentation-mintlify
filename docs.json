@@ -307,13 +307,29 @@
             ]
           },
           {
+            "group": "L2PS Privacy Subnets",
+            "icon": "shield-halved",
+            "pages": [
+              "backend/l2ps-subnet-framework/overview",
+              "backend/l2ps-subnet-framework/how-are-l2ps-transactions-handled",
+              "backend/l2ps-subnet-framework/quickstart"
+            ]
+          },
+          {
+            "group": "ZK Identity",
+            "icon": "fingerprint",
+            "pages": [
+              "backend/zk-identity/overview",
+              "backend/zk-identity/setup",
+              "backend/zk-identity/api-reference"
+            ]
+          },
+          {
             "group": "Architecture",
             "icon": "sitemap",
             "pages": [
               "backend/communications-stack",
-              "backend/storage-programs/overview",
-              "backend/l2ps-subnet-framework/overview",
-              "backend/l2ps-subnet-framework/how-are-l2ps-transactions-handled"
+              "backend/storage-programs/overview"
             ]
           },
           {
