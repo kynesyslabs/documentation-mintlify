@@ -1,0 +1,705 @@
+---
+title: "Integrate TLSNotary (Any Framework)"
+description: "Use TLSNotary from Vite, Next.js, SvelteKit, or any non-webpack framework via a lightweight iframe client. Zero WASM configuration required."
+icon: "window-frame"
+---
+
+# Integrate TLSNotary (Any Framework)
+
+The standard [Build a TLSNotary Webapp](/sdk/web2/tlsnotary/build-tlsnotary-webapp) guide uses webpack directly, which requires complex WASM polyfills, worker setup, and browser polyfill configuration.
+
+If you use **Vite, Next.js, SvelteKit, Nuxt, Remix, Astro**, or any other bundler, you can skip all of that. The **TlsnClient** approach runs all the heavy TLSNotary WASM machinery inside a hosted iframe, and your app communicates with it through a simple async API over `postMessage`.
+
+### Why Use the Iframe Approach?
+
+| | Webpack (Direct) | Iframe (TlsnClient) |
+|---|---|---|
+| **Bundler** | Webpack only | Any (Vite, Next.js, SvelteKit, etc.) |
+| **WASM config** | Complex polyfills required | None |
+| **Dependencies** | `@kynesyslabs/demosdk`, `comlink`, polyfills | Zero (single file) |
+| **Bundle size impact** | Large (~5MB+ WASM) | Negligible (~4KB) |
+| **Setup complexity** | High | Minimal |
+| **COOP/COEP headers** | You must configure | Handled by the hosted embed |
+
+## How It Works
+
+Your app loads a hidden `<iframe>` pointing to a hosted TLSNotary embed. The embed contains the full webpack build with WASM, workers, and polyfills. Your app calls methods on `TlsnClient`, which sends `postMessage` commands to the iframe and returns promises with the results.
+
+```
+┌─────────────────────────────┐       ┌──────────────────────────────┐
+│  Your App (any bundler)     │       │  TLSN Embed (iframe)         │
+│                             │       │                              │
+│  TlsnClient                 │       │  TlsnManager + WASM          │
+│    .connect()  ─────────────┼──────►│    WebSocket proxy           │
+│    .attest()   ─────────────┼──────►│    TLSNotary notarization    │
+│    .verify()   ◄────────────┼───────┤    Proof generation          │
+│                             │       │                              │
+│  postMessage ↔ postMessage  │       │  COOP/COEP headers           │
+└─────────────────────────────┘       └──────────────────────────────┘
+```
+
+## Quick Start
+
+### Step 1: Copy the TlsnClient
+
+The `TlsnClient` is a single TypeScript file with zero dependencies. Copy it into your project:
+
+<Accordion title="TlsnClient.ts (click to expand)">
+
+```typescript TlsnClient.ts
+// TlsnClient - Lightweight client SDK for TLSN component
+// Zero dependencies. Works in any bundler or even as a plain <script> tag.
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+export type LogLevel = 'info' | 'success' | 'warning' | 'error';
+
+export interface AttestRequest {
+  url: string;
+  method: HttpMethod;
+  headers?: Record<string, string>;
+  body?: string | Record<string, unknown>;
+}
+
+export interface CommitRanges {
+  sent: Array<{ start: number; end: number }>;
+  recv: Array<{ start: number; end: number }>;
+}
+
+export interface AttestOptions {
+  commitRanges?: CommitRanges;
+  storage?: 'local' | 'onchain';
+}
+
+export interface AttestResult {
+  presentation: unknown;
+  serverName: string;
+  time: number;
+  sent: string;
+  recv: string;
+  verifyingKey: string;
+  tokenId: string;
+  requestTxHash: string;
+}
+
+export interface VerifyResult {
+  serverName: string;
+  time: number;
+  sent: string;
+  recv: string;
+  verifyingKey: string;
+}
+
+export interface TranscriptPreview {
+  sent: number[];
+  recv: number[];
+  sentText: string;
+  recvText: string;
+}
+
+export interface StoreResult {
+  txHash: string;
+}
+
+export interface TransactionDetails {
+  description: string;
+  amount: string;
+  targetUrl?: string;
+  tokenId?: string;
+  txHash: string;
+}
+
+export interface TlsnClientOptions {
+  /** URL where the TLSN iframe embed is hosted */
+  iframeUrl: string;
+  /** Container element to append the iframe to. Defaults to document.body. */
+  container?: HTMLElement;
+  /** Timeout in milliseconds for RPC calls. Defaults to 300000 (5 min). */
+  timeout?: number;
+  /** Timeout in milliseconds for iframe ready. Defaults to 30000 (30s). */
+  readyTimeout?: number;
+  /** Enable debug logging to console. Defaults to false. */
+  debug?: boolean;
+}
+
+type EventCallback = (...args: any[]) => void;
+type TxConfirmHandler = (details: TransactionDetails) => Promise<boolean>;
+
+export class TlsnClient {
+  private iframe: HTMLIFrameElement;
+  private ready: Promise<void>;
+  private pendingCalls = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void }>();
+  private listeners = new Map<string, Set<EventCallback>>();
+  private txConfirmHandler: TxConfirmHandler | null = null;
+  private timeout: number;
+  private readyTimeout: number;
+  private debugEnabled: boolean;
+  private destroyed = false;
+
+  constructor(options: TlsnClientOptions) {
+    this.timeout = options.timeout || 300_000;
+    this.readyTimeout = options.readyTimeout || 30_000;
+    this.debugEnabled = options.debug || false;
+
+    this.iframe = document.createElement('iframe');
+    this.iframe.src = options.iframeUrl;
+    this.iframe.style.cssText = 'display:none;width:0;height:0;border:none;position:absolute;';
+
+    const container = options.container || document.body;
+    container.appendChild(this.iframe);
+
+    this.ready = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        window.removeEventListener('message', onMessage);
+        reject(new Error(
+          `TlsnClient: iframe did not become ready within ${this.readyTimeout}ms. ` +
+          `Check that ${options.iframeUrl} is reachable and serving the TLSN embed with COOP/COEP headers.`
+        ));
+      }, this.readyTimeout);
+
+      const onMessage = (event: MessageEvent) => {
+        if (event.source !== this.iframe.contentWindow) return;
+        if (event.data?.type === 'ready') {
+          clearTimeout(timer);
+          window.removeEventListener('message', onMessage);
+          resolve();
+        }
+      };
+      window.addEventListener('message', onMessage);
+    });
+
+    window.addEventListener('message', this.handleMessage);
+  }
+
+  async waitReady(): Promise<void> { await this.ready; }
+
+  destroy(): void {
+    this.destroyed = true;
+    window.removeEventListener('message', this.handleMessage);
+    this.iframe.remove();
+    for (const [, pending] of this.pendingCalls) {
+      pending.reject(new Error('TlsnClient destroyed'));
+    }
+    this.pendingCalls.clear();
+    this.listeners.clear();
+  }
+
+  on(event: string, callback: EventCallback): void {
+    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
+    this.listeners.get(event)!.add(callback);
+  }
+
+  off(event: string, callback: EventCallback): void {
+    this.listeners.get(event)?.delete(callback);
+  }
+
+  onTransactionConfirm(handler: TxConfirmHandler): void {
+    this.txConfirmHandler = handler;
+  }
+
+  async connect(rpcUrl: string): Promise<void> {
+    await this.ready;
+    await this.call('connect', { rpcUrl });
+  }
+
+  async connectWallet(mnemonic: string): Promise<string> {
+    const result = await this.call<{ address: string }>('connectWallet', { mnemonic });
+    return result.address;
+  }
+
+  async disconnect(): Promise<void> { await this.call('disconnect', {}); }
+
+  async getAddress(): Promise<string> {
+    const result = await this.call<{ address: string }>('getAddress', {});
+    return result.address;
+  }
+
+  async getBalance(): Promise<string> {
+    const result = await this.call<{ balance: string }>('getBalance', {});
+    return result.balance;
+  }
+
+  async checkTlsNotary(): Promise<boolean> {
+    const result = await this.call<{ enabled: boolean }>('checkTlsNotary', {});
+    return result.enabled;
+  }
+
+  async generateMnemonic(): Promise<string> {
+    const result = await this.call<{ mnemonic: string }>('generateMnemonic', {});
+    return result.mnemonic;
+  }
+
+  async attest(request: AttestRequest, options?: AttestOptions): Promise<AttestResult> {
+    return this.call<AttestResult>('attest', { request, options });
+  }
+
+  async verify(presentation: unknown): Promise<VerifyResult> {
+    return this.call<VerifyResult>('verify', { presentation });
+  }
+
+  async previewTranscript(request: AttestRequest): Promise<TranscriptPreview> {
+    return this.call<TranscriptPreview>('previewTranscript', { request });
+  }
+
+  async storeProof(tokenId: string, presentation: unknown): Promise<StoreResult> {
+    return this.call<StoreResult>('storeProof', { tokenId, presentation });
+  }
+
+  private handleMessage = (event: MessageEvent): void => {
+    if (event.source !== this.iframe.contentWindow) return;
+    const msg = event.data;
+    if (!msg || !msg.type) return;
+
+    if (msg.type === 'result' && msg.id) {
+      const pending = this.pendingCalls.get(msg.id);
+      if (pending) { this.pendingCalls.delete(msg.id); pending.resolve(msg.data); }
+      return;
+    }
+
+    if (msg.type === 'error' && msg.id) {
+      const pending = this.pendingCalls.get(msg.id);
+      if (pending) { this.pendingCalls.delete(msg.id); pending.reject(new Error(msg.message)); }
+      return;
+    }
+
+    if (msg.type === 'event') {
+      if (msg.event === 'tx:confirm') {
+        this.handleTxConfirm(msg.id, msg.data);
+        return;
+      }
+      const callbacks = this.listeners.get(msg.event);
+      if (callbacks) {
+        for (const cb of callbacks) {
+          try { cb(msg.data); } catch (err) { console.error(`TlsnClient event error [${msg.event}]:`, err); }
+        }
+      }
+    }
+  };
+
+  private async handleTxConfirm(confirmId: string, details: TransactionDetails): Promise<void> {
+    let confirmed = true;
+    if (this.txConfirmHandler) {
+      try { confirmed = await this.txConfirmHandler(details); } catch { confirmed = false; }
+    }
+    this.iframe.contentWindow?.postMessage({ id: confirmId, type: 'txConfirmResponse', confirmed }, '*');
+  }
+
+  private call<T = unknown>(type: string, params: Record<string, unknown>): Promise<T> {
+    if (this.destroyed) return Promise.reject(new Error('TlsnClient has been destroyed'));
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingCalls.delete(id);
+        reject(new Error(`TlsnClient call '${type}' timed out after ${this.timeout}ms`));
+      }, this.timeout);
+
+      this.pendingCalls.set(id, {
+        resolve: (value: any) => { clearTimeout(timer); resolve(value); },
+        reject: (error: Error) => { clearTimeout(timer); reject(error); },
+      });
+
+      this.iframe.contentWindow?.postMessage({ id, type, ...params }, '*');
+    });
+  }
+}
+```
+
+</Accordion>
+
+### Step 2: Use in Your App
+
+```typescript
+import { TlsnClient } from './TlsnClient';
+
+const TLSN_EMBED_URL = 'https://tlsn.demos.sh';
+const RPC_URL = 'https://node2.demos.sh';
+
+async function main() {
+  // 1. Create client pointing to the hosted TLSN embed
+  const tlsn = new TlsnClient({
+    iframeUrl: TLSN_EMBED_URL,
+    debug: true, // optional: logs postMessage traffic to console
+  });
+
+  // 2. Wait for the iframe to load and initialize
+  await tlsn.waitReady();
+
+  // 3. Connect to the Demos Network
+  await tlsn.connect(RPC_URL);
+
+  // 4. Connect a wallet (generate or provide a mnemonic)
+  const mnemonic = await tlsn.generateMnemonic();
+  const address = await tlsn.connectWallet(mnemonic);
+  console.log('Wallet address:', address);
+
+  // 5. Handle transaction confirmations
+  tlsn.onTransactionConfirm(async (details) => {
+    return window.confirm(`Confirm transaction: ${details.description}\nAmount: ${details.amount} DEM`);
+  });
+
+  // 6. Perform an attestation
+  const result = await tlsn.attest({
+    url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+    method: 'GET',
+  });
+
+  console.log('Server:', result.serverName);
+  console.log('Response:', result.recv);
+  console.log('Proof token:', result.tokenId);
+
+  // 7. Verify the proof locally
+  const verification = await tlsn.verify(result.presentation);
+  console.log('Verified at:', new Date(verification.time * 1000));
+
+  // 8. Clean up when done
+  tlsn.destroy();
+}
+
+main().catch(console.error);
+```
+
+That's it. No webpack configuration, no WASM polyfills, no worker setup.
+
+## Framework Examples
+
+### Vite + TypeScript
+
+```bash
+bun create vite my-tlsn-app --template vanilla-ts
+cd my-tlsn-app
+```
+
+Copy `TlsnClient.ts` into `src/`, then use it in `src/main.ts`:
+
+```typescript src/main.ts
+import { TlsnClient } from './TlsnClient';
+
+const tlsn = new TlsnClient({ iframeUrl: 'https://tlsn.demos.sh' });
+
+document.querySelector<HTMLButtonElement>('#attest-btn')?.addEventListener('click', async () => {
+  await tlsn.waitReady();
+  await tlsn.connect('https://node2.demos.sh');
+
+  const mnemonic = await tlsn.generateMnemonic();
+  await tlsn.connectWallet(mnemonic);
+
+  const result = await tlsn.attest({
+    url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+    method: 'GET',
+  });
+
+  document.querySelector('#result')!.textContent = result.recv;
+});
+```
+
+### React (Vite or CRA)
+
+```tsx src/hooks/useTlsn.ts
+import { useEffect, useRef, useState } from 'react';
+import { TlsnClient, type AttestResult } from '../TlsnClient';
+
+export function useTlsn() {
+  const clientRef = useRef<TlsnClient | null>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const client = new TlsnClient({ iframeUrl: 'https://tlsn.demos.sh' });
+    clientRef.current = client;
+
+    client.waitReady().then(() => setReady(true));
+
+    return () => client.destroy();
+  }, []);
+
+  const attest = async (url: string): Promise<AttestResult | null> => {
+    const client = clientRef.current;
+    if (!client) return null;
+
+    await client.connect('https://node2.demos.sh');
+    const mnemonic = await client.generateMnemonic();
+    await client.connectWallet(mnemonic);
+
+    client.onTransactionConfirm(async (details) => {
+      return window.confirm(`${details.description}: ${details.amount} DEM`);
+    });
+
+    return client.attest({ url, method: 'GET' });
+  };
+
+  return { ready, attest };
+}
+```
+
+```tsx src/App.tsx
+import { useTlsn } from './hooks/useTlsn';
+
+export function App() {
+  const { ready, attest } = useTlsn();
+
+  const handleAttest = async () => {
+    const result = await attest('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+    if (result) {
+      console.log('Attestation:', result.recv);
+    }
+  };
+
+  return (
+    <div>
+      <button onClick={handleAttest} disabled={!ready}>
+        {ready ? 'Attest Bitcoin Price' : 'Loading TLSN...'}
+      </button>
+    </div>
+  );
+}
+```
+
+### Next.js
+
+Since `TlsnClient` uses `document` and `window`, it must run client-side only:
+
+```tsx app/components/TlsnAttest.tsx
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import { TlsnClient } from '@/lib/TlsnClient';
+
+export function TlsnAttest() {
+  const clientRef = useRef<TlsnClient | null>(null);
+  const [ready, setReady] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  useEffect(() => {
+    const client = new TlsnClient({ iframeUrl: 'https://tlsn.demos.sh' });
+    clientRef.current = client;
+    client.waitReady().then(() => setReady(true));
+    return () => client.destroy();
+  }, []);
+
+  const handleAttest = async () => {
+    const client = clientRef.current;
+    if (!client) return;
+
+    await client.connect('https://node2.demos.sh');
+    const mnemonic = await client.generateMnemonic();
+    await client.connectWallet(mnemonic);
+
+    const attestResult = await client.attest({
+      url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+      method: 'GET',
+    });
+
+    setResult(attestResult.recv);
+  };
+
+  return (
+    <div>
+      <button onClick={handleAttest} disabled={!ready}>Attest</button>
+      {result && <pre>{result}</pre>}
+    </div>
+  );
+}
+```
+
+<Warning>
+Do **not** import `TlsnClient` in server components or `getServerSideProps`. It requires browser APIs (`document`, `window`, `postMessage`).
+</Warning>
+
+### SvelteKit
+
+```svelte src/lib/components/TlsnAttest.svelte
+<script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
+  import { TlsnClient } from '$lib/TlsnClient';
+
+  let client: TlsnClient | null = null;
+  let ready = false;
+  let result = '';
+
+  onMount(() => {
+    client = new TlsnClient({ iframeUrl: 'https://tlsn.demos.sh' });
+    client.waitReady().then(() => (ready = true));
+  });
+
+  onDestroy(() => client?.destroy());
+
+  async function handleAttest() {
+    if (!client) return;
+    await client.connect('https://node2.demos.sh');
+    const mnemonic = await client.generateMnemonic();
+    await client.connectWallet(mnemonic);
+
+    const attestResult = await client.attest({
+      url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+      method: 'GET',
+    });
+
+    result = attestResult.recv;
+  }
+</script>
+
+<button on:click={handleAttest} disabled={!ready}>
+  {ready ? 'Attest Bitcoin Price' : 'Loading TLSN...'}
+</button>
+
+{#if result}
+  <pre>{result}</pre>
+{/if}
+```
+
+### Vue / Nuxt
+
+```vue components/TlsnAttest.vue
+<script setup lang="ts">
+import { ref, onMounted, onUnmounted } from 'vue';
+import { TlsnClient } from '@/lib/TlsnClient';
+
+const client = ref<TlsnClient | null>(null);
+const ready = ref(false);
+const result = ref('');
+
+onMounted(() => {
+  client.value = new TlsnClient({ iframeUrl: 'https://tlsn.demos.sh' });
+  client.value.waitReady().then(() => (ready.value = true));
+});
+
+onUnmounted(() => client.value?.destroy());
+
+async function handleAttest() {
+  if (!client.value) return;
+  await client.value.connect('https://node2.demos.sh');
+  const mnemonic = await client.value.generateMnemonic();
+  await client.value.connectWallet(mnemonic);
+
+  const attestResult = await client.value.attest({
+    url: 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd',
+    method: 'GET',
+  });
+
+  result.value = attestResult.recv;
+}
+</script>
+
+<template>
+  <div>
+    <button @click="handleAttest" :disabled="!ready">
+      {{ ready ? 'Attest Bitcoin Price' : 'Loading TLSN...' }}
+    </button>
+    <pre v-if="result">{{ result }}</pre>
+  </div>
+</template>
+```
+
+## TlsnClient API Reference
+
+### Constructor Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `iframeUrl` | `string` | *required* | URL of the hosted TLSN embed |
+| `container` | `HTMLElement` | `document.body` | Element to append the hidden iframe to |
+| `timeout` | `number` | `300000` (5 min) | Timeout for RPC calls in ms |
+| `readyTimeout` | `number` | `30000` (30s) | Timeout for iframe initialization in ms |
+| `debug` | `boolean` | `false` | Log all postMessage traffic to console |
+
+### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `waitReady()` | `Promise<void>` | Wait for iframe to initialize |
+| `connect(rpcUrl)` | `Promise<void>` | Connect to Demos Network node |
+| `connectWallet(mnemonic)` | `Promise<string>` | Connect wallet, returns address |
+| `disconnect()` | `Promise<void>` | Disconnect from network |
+| `generateMnemonic()` | `Promise<string>` | Generate a new BIP39 mnemonic |
+| `getAddress()` | `Promise<string>` | Get connected wallet address |
+| `getBalance()` | `Promise<string>` | Get wallet balance in DEM |
+| `checkTlsNotary()` | `Promise<boolean>` | Check if TLSNotary is enabled on the node |
+| `previewTranscript(request)` | `Promise<TranscriptPreview>` | Preview request/response before attesting |
+| `attest(request, options?)` | `Promise<AttestResult>` | Perform TLS attestation |
+| `verify(presentation)` | `Promise<VerifyResult>` | Verify a proof locally |
+| `storeProof(tokenId, presentation)` | `Promise<StoreResult>` | Store proof on-chain |
+| `destroy()` | `void` | Remove iframe, reject pending calls, clean up |
+
+### Events
+
+```typescript
+// Listen for status changes
+tlsn.on('status', (status) => {
+  console.log('Status:', status);
+  // 'disconnected' | 'connecting' | 'connected' | 'ready' | 'attesting' | 'verifying' | 'error'
+});
+
+// Listen for log messages
+tlsn.on('log', ({ message, level }) => {
+  console.log(`[${level}] ${message}`);
+});
+
+// Handle transaction confirmations
+tlsn.onTransactionConfirm(async (details) => {
+  // details: { description, amount, targetUrl?, tokenId?, txHash }
+  return window.confirm(`${details.description}\nCost: ${details.amount} DEM`);
+});
+```
+
+## Self-Hosting the TLSN Embed (Optional)
+
+The public instance at `https://tlsn.demos.sh` is the easiest way to get started. If you need to host the embed yourself (for example, on a private network or for development), you can use Docker Compose.
+
+### Prerequisites
+
+Clone the [tlsn-component](https://github.com/kynesyslabs/tlsn-component) repository and build:
+
+```bash
+git clone https://github.com/kynesyslabs/tlsn-component.git
+cd tlsn-component
+bun install
+bun run build:embed
+```
+
+### Run with Docker Compose
+
+```yaml docker-compose.yml
+services:
+  tlsn-embed:
+    build: .
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./build/embed:/srv:ro
+    environment:
+      - TLSN_ADDRESS=your_tlsn_contract_address
+```
+
+```bash
+docker compose up -d
+```
+
+The embed will be available at `http://localhost:8443`. Caddy handles the required `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy` headers automatically.
+
+Then point your client to the local instance:
+
+```typescript
+const tlsn = new TlsnClient({
+  iframeUrl: 'http://localhost:8443',
+});
+```
+
+<Info>
+The COOP/COEP headers (`Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp`) are required because TLSNotary uses `SharedArrayBuffer` for WASM threads. These headers are configured on the **embed server**, not on your app's server. If you use the public `https://tlsn.demos.sh` instance, you don't need to worry about this.
+</Info>
+
+## Troubleshooting
+
+**"iframe did not become ready within 30000ms"**
+- Verify the iframe URL is reachable: open `https://tlsn.demos.sh` directly in a browser tab
+- Check your browser's console for CORS or CSP errors
+- If self-hosting, ensure COOP/COEP headers are being served
+
+**"TlsnClient call timed out"**
+- Attestation can take 2-5 seconds. The default timeout is 5 minutes.
+- Check network connectivity to the Demos RPC node
+- Enable `debug: true` in constructor options to see postMessage traffic
+
+**Blank page or hydration errors (Next.js / Nuxt)**
+- `TlsnClient` uses browser APIs (`document`, `window`). Only import and instantiate it in client-side code.
+- In Next.js: use `'use client'` directive or dynamic imports with `{ ssr: false }`
+- In Nuxt: use `<ClientOnly>` wrapper or `onMounted()` lifecycle hook

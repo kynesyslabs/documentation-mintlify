@@ -227,6 +227,7 @@
                 "pages": [
                   "sdk/web2/tlsnotary/overview",
                   "sdk/web2/tlsnotary/build-tlsnotary-webapp",
+                  "sdk/web2/tlsnotary/iframe-integration",
                   "sdk/web2/tlsnotary/api-reference",
                   "sdk/web2/tlsnotary/use-cases"
                 ]
