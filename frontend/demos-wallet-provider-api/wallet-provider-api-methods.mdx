@@ -41,7 +41,7 @@ These let your dApp construct transactions (or messages) and have the wallet sig
 * **Params**: `[ message: string ]`
 * **Behavior**: opens a sign popup for a plain message.
 * **Success data**: `{ signature: string }` (wrapped by the wallet; underlying object includes `{ success: true, signature }`)
-* **Errors**: `signError`, `signCancelled`, `TIMEOUT`, `NOT_LOGGED_IN`
+* **Errors**: `signError`, `signCancelled`, `TIMEOUT`
 
 Example:
 
@@ -54,7 +54,7 @@ const res = await provider.request({ method: 'sign', params: ['hello world'] });
 * **Params**: `[ unsignedTransaction: Transaction ]`
 * **Behavior**: opens a sign-transaction popup and returns the signed transaction.
 * **Success data**: `{ signedTransaction }` (wrapped; underlying object includes `{ success: true, signedTransaction }`)
-* **Errors**: `signTransactionError`, `signTransactionCancelled`, `TIMEOUT`, `NOT_LOGGED_IN`
+* **Errors**: `signTransactionError`, `signTransactionCancelled`, `TIMEOUT`
 
 Example:
 
@@ -111,12 +111,28 @@ const res = await provider.request({
 });
 ```
 
-### Identity
+#### xmTransaction
+
+* **Params**: `[ payload: XMScript ]`
+* **Behavior**: creates an XM (cross-chain) transaction payload, validates it, and opens validation popup for user confirmation and broadcast.
+* **Success data**: `{ result, validityData }`
+* **Errors**: `xmTransactionError`, `validationCancelled`, `TIMEOUT`, `POPUP_ERROR`
+
+Example:
+
+```ts
+const payload = {/* XMScript from SDK */};
+const res = await provider.request({ method: 'xmTransaction', params: [payload] });
+```
+
+## Identity
+
+### Cross-Chain (XM) Identities
 
 #### getXmIdentities
 
 * **Params**: none
-* **Success data**: list of identities from SDK
+* **Success data**: list of XM identities from SDK
 * **Errors**: `getXmIdentitiesError`
 
 Example:
@@ -153,6 +169,8 @@ const payload = { /* XMCoreTargetIdentityPayload */ };
 const res = await provider.request({ method: 'removeXmIdentity', params: [payload] });
 ```
 
+### Web2 Identities
+
 #### getWeb2Identities
 
 * **Params**: none
@@ -169,7 +187,7 @@ const res = await provider.request({ method: 'getWeb2Identities' });
 
 * **Params**: none
 * **Success data**: proof payload to be used for Web2 identity linking
-* **Errors**: `getWeb2IdentityProofPayloadError` (also returned if user not logged in)
+* **Errors**: `getWeb2IdentityProofPayloadError`
 
 Example:
 
@@ -179,8 +197,8 @@ const res = await provider.request({ method: 'getWeb2IdentityProofPayload' });
 
 #### addTwitterIdentity
 
-* **Params**: `[payload: TwitterProof]`
-* **Behavior**: validates and prompts user in validation popup; upon confirmation broadcasts.
+* **Params**: `[payload: TwitterProof, referralCode?: string]`
+* **Behavior**: validates and prompts user in validation popup; upon confirmation broadcasts. Optional referral code can be provided as second parameter.
 * **Success data**: `{ result, validityData }`
 * **Errors**: `addTwitterIdentityError`, `addTwitterIdentityCancelled`, `TIMEOUT`
 
@@ -189,6 +207,37 @@ Example:
 ```ts
 const proof = /* TwitterProof from your backend/SDK */
 const res = await provider.request({ method: 'addTwitterIdentity', params: [proof] });
+
+// With referral code
+const res = await provider.request({ method: 'addTwitterIdentity', params: [proof, 'REFERRAL123'] });
+```
+
+#### addDiscordIdentity
+
+* **Params**: `[payload: DiscordProof]`
+* **Behavior**: validates Discord identity proof and prompts user in validation popup; upon confirmation broadcasts.
+* **Success data**: `{ result, validityData }`
+* **Errors**: `addDiscordIdentityError`, `addDiscordIdentityCancelled`, `TIMEOUT`
+
+Example:
+
+```ts
+const proof = /* DiscordProof from your backend/SDK */
+const res = await provider.request({ method: 'addDiscordIdentity', params: [proof] });
+```
+
+#### addGithubIdentity
+
+* **Params**: `[payload: GithubProof]`
+* **Behavior**: validates Github identity proof and prompts user in validation popup; upon confirmation broadcasts.
+* **Success data**: `{ result, validityData }`
+* **Errors**: `addGithubIdentityError`, `addGithubIdentityCancelled`, `TIMEOUT`
+
+Example:
+
+```ts
+const proof = /* GithubProof from your backend/SDK */
+const res = await provider.request({ method: 'addGithubIdentity', params: [proof] });
 ```
 
 #### removeWeb2Identity
@@ -205,4 +254,123 @@ const res = await provider.request({
   method: 'removeWeb2Identity',
   params: [{ context: 'twitter', username: 'handle' }],
 });
+```
+
+### Unstoppable Domains
+
+#### getUDChallenge
+
+* **Params**: `[ demosPublicKey: string, signingAddress: string ]`
+* **Behavior**: generates a challenge string for Unstoppable Domains identity verification.
+* **Success data**: challenge string
+* **Errors**: `getUDChallengeError`
+
+Example:
+
+```ts
+const res = await provider.request({
+  method: 'getUDChallenge',
+  params: ['demosPublicKey123', '0xabc...'],
+});
+```
+
+#### getUDResolution
+
+* **Params**: `[ domain: string ]`
+* **Behavior**: resolves an Unstoppable Domain to get its resolution data.
+* **Success data**: `UnifiedDomainResolution` object
+* **Errors**: `getUDResolutionError`
+
+Example:
+
+```ts
+const res = await provider.request({
+  method: 'getUDResolution',
+  params: ['mydomain.crypto'],
+});
+```
+
+#### addUDIdentity
+
+* **Params**: `[ signingAddress: string, signature: string, challenge: string, resolutionData: UnifiedDomainResolution, referralCode?: string ]`
+* **Behavior**: validates Unstoppable Domain identity with the provided signature and challenge, prompts user in validation popup; upon confirmation broadcasts. Optional referral code can be provided.
+* **Success data**: `{ result, validityData }`
+* **Errors**: `addUDIdentityError`, `addUDIdentityCancelled`, `TIMEOUT`
+
+<Note>
+The `signingAddress` should be an EVM address (e.g., `0x...`) or Solana address based on the chosen chain. Similarly, the `signature` should be an EVM signature or Solana signature corresponding to the chain used for signing.
+</Note>
+
+Example:
+
+```ts
+// First get the challenge
+const challengeRes = await provider.request({
+  method: 'getUDChallenge',
+  params: [demosPublicKey, signingAddress],
+});
+
+// Get resolution data
+const resolutionRes = await provider.request({
+  method: 'getUDResolution',
+  params: ['mydomain.crypto'],
+});
+
+// Sign the challenge with user's wallet (EVM or Solana), then add identity
+const res = await provider.request({
+  method: 'addUDIdentity',
+  params: [signingAddress, signature, challengeRes.data, resolutionRes.data],
+});
+
+// With referral code
+const res = await provider.request({
+  method: 'addUDIdentity',
+  params: [signingAddress, signature, challengeRes.data, resolutionRes.data, 'REFERRAL123'],
+});
+```
+
+### Nomis Score
+
+#### getNomisScore
+
+* **Params**: `[ walletAddress: string, chain: string ]`
+* **Behavior**: fetches the Nomis score for the specified wallet address on the given chain.
+* **Success data**: Nomis score response object
+* **Errors**: `getNomisScoreError`
+
+Example:
+
+```ts
+const res = await provider.request({
+  method: 'getNomisScore',
+  params: ['0xabc...', 'evm'], // chain: 'evm' or 'solana'
+});
+```
+
+#### addNomisIdentity
+
+* **Params**: `[ payload: NomisWalletIdentity ]`
+* **Behavior**: validates Nomis identity and prompts user in validation popup; upon confirmation broadcasts.
+* **Success data**: `{ result, validityData }`
+* **Errors**: `addNomisIdentityError`, `addNomisIdentityCancelled`, `TIMEOUT`
+
+Example:
+
+```ts
+const payload = {/* NomisWalletIdentity from SDK */};
+const res = await provider.request({ method: 'addNomisIdentity', params: [payload] });
+```
+
+#### removeNomisIdentity
+
+* **Params**: `[ payload: NomisWalletIdentity ]`
+* **Behavior**: creates removal validity data and prompts user in validation popup; upon confirmation broadcasts.
+* **Success data**: `{ result, validityData }`
+* **Errors**: `removeNomisIdentityError`, `removeNomisIdentityCancelled`, `TIMEOUT`
+
+Example:
+
+```ts
+const payload = {/* NomisWalletIdentity to remove */};
+const res = await provider.request({ method: 'removeNomisIdentity', params: [payload] });
 ```
