@@ -94,15 +94,6 @@
                 ]
               },
               {
-                "group": "L2PS SDK",
-                "pages": [
-                  "sdk/websdk/l2ps-sdk/overview",
-                  "sdk/websdk/l2ps-sdk/the-l2ps-module",
-                  "sdk/websdk/l2ps-sdk/interacting-with-the-l2ps",
-                  "sdk/websdk/l2ps-sdk/l2ps-messaging-system"
-                ]
-              },
-              {
                 "group": "Instant Messaging",
                 "pages": [
                   "sdk/websdk/instant-messaging/overview",
