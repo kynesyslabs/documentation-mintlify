@@ -93,15 +93,15 @@ Look for these logs:
 The POC app provides a visual interface to test L2PS transactions.
 
 <Info>
-The L2PS POC app is available as a separate repository. Clone it to test your L2PS setup.
+The L2PS POC app is available as a [separate repository](https://github.com/kynesyslabs/l2ps-poc). Clone it to test your L2PS setup.
 </Info>
 
 ### Install and Run
 
 ```bash
 # Clone the POC app (separate repository)
-git clone https://github.com/kynesyslabs/l2ps-poc-app.git
-cd l2ps-poc-app
+git clone https://github.com/kynesyslabs/l2ps-poc.git
+cd l2ps-poc
 npm install
 npm run dev
 # Open http://localhost:5173
@@ -223,8 +223,8 @@ npm run l2ps:zk:setup
 ./run
 
 # 5. Setup POC app (separate repository)
-git clone https://github.com/kynesyslabs/l2ps-poc-app.git
-cd l2ps-poc-app && npm install
+git clone https://github.com/kynesyslabs/l2ps-poc.git
+cd l2ps-poc && npm install
 
 # 6. Configure POC .env with your node's L2PS keys
 # Copy key values from: data/l2ps/testnet_l2ps_001/private_key.txt and iv.txt
