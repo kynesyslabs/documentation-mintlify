@@ -94,6 +94,19 @@
                 ]
               },
               {
+                "group": "Validator Staking",
+                "pages": [
+                  "sdk/websdk/validator-staking/overview"
+                ]
+              },
+              {
+                "group": "Governance",
+                "pages": [
+                  "sdk/websdk/governance/overview",
+                  "sdk/websdk/governance/quickstart"
+                ]
+              },
+              {
                 "group": "Instant Messaging",
                 "pages": [
                   "sdk/websdk/instant-messaging/overview",
@@ -273,6 +286,20 @@
               "backend/internal-mechanisms/overview",
               "backend/internal-mechanisms/network-time-synchronization",
               "backend/internal-mechanisms/cross-context-identities"
+            ]
+          },
+          {
+            "group": "Validator Lifecycle",
+            "icon": "user-shield",
+            "pages": [
+              "backend/validator-lifecycle/overview"
+            ]
+          },
+          {
+            "group": "Network Governance",
+            "icon": "scale-balanced",
+            "pages": [
+              "backend/network-governance/overview"
             ]
           },
           {

@@ -1,0 +1,178 @@
+---
+title: "Stackable Genesis"
+description: "On-chain governance for network parameters: validators propose changes, vote with stake-weighted supermajority, and activation lands deterministically across every node."
+icon: "diagram-project"
+---
+
+# Stackable Genesis
+
+DEMOS network parameters (`networkFee`, `rpcFee`, `minValidatorStake`,
+`featureFlags`) are not hard-coded for the lifetime of the chain.
+Validators agree on changes through on-chain proposals; once activated,
+the new values **stack** on top of the genesis defaults — every node folds
+the same active set of upgrades and arrives at the same `NetworkParameters`
+view without coordination.
+
+## What can be governed
+
+| Parameter | Range | Effect when activated |
+|-----------|-------|------------------------|
+| `networkFee` | `0`–`5000` | Per-byte fee added to gas for every transaction. |
+| `rpcFee` | `0`–`5000` | Per-byte fee paid to the entry RPC node. |
+| `minValidatorStake` | bigint string | Minimum stake required to register as a validator. |
+| `featureFlags` | `Record<string, boolean>` | Toggle protocol features (`l2ps`, `tlsn`, etc.). |
+
+Phase 2 will add `blockTimeMs` and `shardSize` to the governable set.
+For the current phase those are operator-set (env / Config) and
+non-governable.
+
+## Configuration precedence
+
+```
+governance (DB active rows)  >  env (Config)  >  hardcoded fallback
+```
+
+- **Hardcoded fallback** — last-resort defaults shipped with the binary.
+- **Env (Config)** — operator-tuned bootstrap values for a fresh chain.
+  Read once at startup, used until governance overrides them.
+- **Governance** — runtime-active proposals override env values per-key.
+  Refreshed in `loadNetworkParameters()` after every committed block.
+
+### Env variables
+
+Operators set initial values via these env vars (loaded by `Config` on
+startup). Each maps to a field on `NetworkParameters` and can later be
+overridden by a passed governance proposal.
+
+| Variable | Maps to | Default |
+|----------|---------|---------|
+| `NETWORK_FEE` | `networkFee` | `10` |
+| `RPC_FEE` | `rpcFee` | `10` |
+| `MIN_VALIDATOR_STAKE` | `minValidatorStake` | `"1000000000000000000"` (10^18) |
+| `CONSENSUS_TIME` | `blockTimeMs` (× 1000) | `1` (= 1000 ms block time) |
+| `SHARD_SIZE` | `shardSize` (Phase 2 only) | `4` |
+
+### Genesis defaults
+
+If neither env nor governance defines a value, `getGenesisNetworkParameters()`
+returns these baked-in fallbacks:
+
+| Field | Value |
+|-------|-------|
+| `blockTimeMs` | `1000` |
+| `shardSize` | `4` |
+| `minValidatorStake` | `"1000000000000000000"` |
+| `networkFee` | `10` |
+| `rpcFee` | `10` |
+| `featureFlags` | `{ l2ps: true, tlsn: true }` |
+
+## Proposal lifecycle
+
+<Steps>
+  <Step title="T = 0  —  propose()">
+    The block confirming the proposal becomes the **snapshotBlock**. The
+    validator set + their staked amounts are frozen as the basis for vote
+    weighting. Status: `pending`.
+  </Step>
+  <Step title="T = 0..VOTING_WINDOW  —  voting">
+    Validators in the snapshot set cast `voteOnUpgrade` transactions. Each
+    vote's weight = `staked_amount @ snapshotBlock` (frozen — unstaking
+    during the window does not reduce a recorded vote's weight).
+  </Step>
+  <Step title="T = VOTING_WINDOW  —  tallyUpgradeVotes()">
+    `approveWeight = Σ weight where approve=true`,
+    `threshold = ceil(2/3 × snapshotWeight)`.
+    Proposal passes iff `approveWeight ≥ threshold` and
+    `snapshotWeight > 0`. Status: `pending → activating` (passed) or
+    `rejected`.
+  </Step>
+  <Step title="T = tally..effectiveAtBlock  —  grace period">
+    Status stays `activating` for at least `GRACE_PERIOD_BLOCKS`. The
+    parameter key is locked: no other proposal targeting the same key
+    will be accepted.
+  </Step>
+  <Step title="T = effectiveAtBlock  —  applyNetworkUpgrade()">
+    `proposedParameters` are folded into `NetworkParameters`
+    deterministically — ordered by `(effectiveAtBlock ASC, proposalId
+    ASC)` so every node arrives at the same result without coordination.
+    Status: `activating → active`.
+  </Step>
+</Steps>
+
+| Constant | Value | Governable? |
+|----------|-------|-------------|
+| `VOTING_WINDOW_BLOCKS` | 100 | ❌ |
+| `GRACE_PERIOD_BLOCKS` | 50 | ❌ |
+| `SUPERMAJORITY` | 2/3 (ceiling-rounded) | ❌ (protocol invariant) |
+| `MAX_CHANGE_PERCENT` | 50% per proposal | ❌ |
+| `UNSTAKE_LOCK_BLOCKS` | 1000 (≈ 10× voting window) | ❌ |
+
+## Atomic-with-block guarantees
+
+Tally and activation hooks run **inside** the same `dataSource.transaction(...)`
+that wraps `insertBlock`. The contract:
+
+1. **All-or-nothing.** Governance state mutations commit atomically with
+   the block. A failed routine rolls the block back; nothing partial
+   persists.
+2. **No node crash on hook failure.** Routine throws → `insertBlock`
+   throws → block insert rejected → consensus retries with the next
+   proposer. The node logs the error but stays online.
+3. **Memory never ahead of DB.** `sharedState.networkParameters` is
+   refreshed by `loadNetworkParameters()` **after** the transaction
+   commits, never inside it. If the transaction rolls back, the refresh
+   is a no-op.
+4. **In-memory cache, not per-tx DB lookups.** `resolveDynamicFees()` and
+   `getShard()` read the in-memory snapshot — zero DB queries per
+   transaction, one SELECT per block to refresh the cache.
+
+## Vote integrity
+
+- One vote per validator per proposal (DB-enforced via unique constraint).
+- Vote final — no edits after the block confirming the vote.
+- Voter must be in the snapshot validator set; new validators registered
+  after `snapshotBlock` are excluded from this vote.
+- Vote weight is frozen at `snapshotBlock`. Unstaking during the voting
+  window does **not** reduce the recorded weight.
+
+## Multi-node consistency
+
+Validator-staking and governance transaction types attach their
+`gcr_edit` **before** `signValidityData()` in the RPC's `confirmTransaction()`.
+This puts the synthesized edit into the signed payload so it survives DTR
+relay and consensus verification untouched. Every node applies the same
+edits deterministically when the block lands — so all 4 nodes converge
+on identical `validators` and `network_upgrades` rows.
+
+## Safety bounds
+
+Two layers gate every proposal:
+
+1. **Per-proposal change cap (50%).** A proposal that moves any numeric
+   parameter by more than 50% (in either direction) from the current
+   active value is rejected.
+2. **Absolute floor/ceiling.** Independent of the cap, every parameter
+   has hard bounds (e.g. `networkFee ∈ [0, 5000]`, `minValidatorStake ≥
+   1% of genesis stake`). Bounds are themselves non-governable.
+
+Both checks run client-side in the SDK and server-side at RPC entry —
+out-of-range proposals are rejected before consuming a snapshot block.
+
+## Why staking ships first
+
+Phase 0 (validator staking) is a hard prerequisite for Phase 1
+(governance): without on-chain stake, there's no weight to base a
+2/3 supermajority on. Staking introduces the lock-period economics that
+makes vote-and-run attacks unattractive (10× voting window of locked
+collateral after `unstake`).
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="SDK / Validator Staking" href="../../sdk/websdk/validator-staking/overview" icon="hand-holding-dollar">
+    Stake, top-up, unstake, exit transactions
+  </Card>
+  <Card title="SDK / Governance" href="../../sdk/websdk/governance/overview" icon="scale-balanced">
+    Propose, vote, query proposals
+  </Card>
+</CardGroup>

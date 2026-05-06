@@ -1,0 +1,115 @@
+---
+title: "Validator Lifecycle"
+description: "On-chain validator state machine: registration, top-up, unstake lock, exit. Protocol-side mechanics enforced by every node."
+icon: "user-shield"
+---
+
+# Validator Lifecycle
+
+A DEMOS validator is an on-chain row in the `validators` table. Its state
+machine is enforced by the protocol on every node — the SDK is just one
+of several ways to drive it.
+
+## State machine
+
+| Status code | Status | Meaning |
+|-------------|--------|---------|
+| `"2"` | `ACTIVE` | Participating in consensus, eligible for shard selection. |
+| `"3"` | `UNSTAKING` | Unstake requested, lock running. Still active until exit. |
+| `"0"` | `EXITED` | Stake withdrawn, removed from active set. |
+
+Transitions are driven by four transaction types — each one a reflexive
+tx signed by the validator's own key:
+
+| From | Tx | To | Notes |
+|------|----|-----|-------|
+| (none) | `validatorStake` | `ACTIVE` | First stake; requires `staked_amount ≥ minValidatorStake` and a `connectionUrl`. |
+| `ACTIVE` | `validatorStake` | `ACTIVE` | Top-up — adds to existing `staked_amount`. |
+| `UNSTAKING` | `validatorStake` | `ACTIVE` | **Top-up resets the unstake.** `unstake_requested_at` and `unstake_available_at` are cleared. |
+| `ACTIVE` | `validatorUnstake` | `UNSTAKING` | Arms the lock period. Validator continues participating in consensus. |
+| `UNSTAKING` | `validatorExit` | `EXITED` | Only valid after the lock has elapsed. |
+
+## Unstake lock
+
+`UNSTAKE_LOCK_BLOCKS = 1000` (≈ 10× the governance voting window).
+
+When a validator submits `validatorUnstake`, the node sets:
+
+```
+unstake_requested_at  = current_block
+unstake_available_at  = current_block + UNSTAKE_LOCK_BLOCKS
+```
+
+`validatorExit` is rejected until `current_block ≥ unstake_available_at`.
+
+The lock window is non-governable. Its purpose is to make
+**vote-and-run** attacks economically unattractive: a validator who
+votes maliciously on a governance proposal cannot exit before the
+proposal's tally + grace period (≈ 150 blocks) leaves time for the
+network to react (slashing is on the Phase-2 roadmap; the lock alone
+already keeps the malicious stake at risk).
+
+## Why restake clears unstake
+
+Without this rule, an attacker could:
+
+1. Stake → `ACTIVE`
+2. Submit `unstake` → `UNSTAKING`, lock starts at block N
+3. Wait 1001 blocks → lock elapsed
+4. Submit `validatorStake` (top-up) → adds new stake, but status stays
+   `UNSTAKING` with the **already-elapsed** lock
+5. Immediately submit `validatorExit` → withdraws ALL stake, including
+   the freshly-added portion that never sat under a lock
+
+By forcing the top-up to reset to `ACTIVE` and clear the unstake
+timestamps, the protocol guarantees every stake unit sits under a fresh
+1000-block lock before exit.
+
+## Eligibility & weight
+
+A validator's `staked_amount` is the basis for two protocol mechanics:
+
+- **Shard selection** — the consensus layer picks shard members from
+  online validators. Stake doesn't currently weight the random pick
+  (Phase 2), but it gates eligibility (you must be `ACTIVE`).
+- **Governance vote weight** — a vote's weight equals the validator's
+  `staked_amount` at the proposal's `snapshotBlock`. The snapshot
+  freezes weights so unstaking during the voting window does not
+  retroactively reduce a recorded vote.
+
+## Persistence guarantees
+
+Validator state changes ride the same atomicity rails as block insertion:
+
+- The `gcr_edit` for a staking tx is attached **before** the RPC node
+  signs `validityData`, so it travels through DTR relay and consensus
+  verification untouched.
+- `GCRValidatorStakeRoutines.apply` runs on every node when the block
+  containing the tx is committed. The routine is idempotent — replaying
+  the same edit yields the same result.
+- A failed routine throws inside `dataSource.transaction(...)` →
+  `insertBlock` rolls the entire block back. Either every node applies
+  the state transition or none do.
+
+## Configuration
+
+Operators control the genesis-state minimum stake via env:
+
+| Variable | Default |
+|----------|---------|
+| `MIN_VALIDATOR_STAKE` | `"1000000000000000000"` (10^18, raw bigint) |
+
+Once a governance proposal activates a different `minValidatorStake`,
+the env value is overridden for the rest of the chain's life (until the
+next governance change).
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="SDK / Validator Staking" href="../../sdk/websdk/validator-staking/overview" icon="hand-holding-dollar">
+    `stake` / `unstake` / `validatorExit` builders + read queries
+  </Card>
+  <Card title="Network Governance" href="../network-governance/overview" icon="scale-balanced">
+    Stackable Genesis: how validator stake feeds vote weight
+  </Card>
+</CardGroup>

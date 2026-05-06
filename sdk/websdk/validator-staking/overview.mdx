@@ -1,0 +1,77 @@
+---
+title: "Validator Staking"
+description: "SDK builders for validator staking transactions. Protocol details live under Backend / Validator Lifecycle."
+icon: "hand-holding-dollar"
+---
+
+# Validator Staking — SDK API
+
+This page is the SDK reference. For the on-chain state machine, lock
+period, and persistence guarantees, see the protocol page:
+
+<Card title="Backend / Validator Lifecycle" href="../../../backend/validator-lifecycle/overview" icon="user-shield">
+  State transitions, unstake lock, restake invariants
+</Card>
+
+## Connect
+
+```typescript
+import { Demos, DemosTransactions } from "@kynesyslabs/demosdk/websdk"
+
+const demos = new Demos()
+await demos.connect("https://node.example.com")
+await demos.connectWallet(mnemonic)
+```
+
+## Builders
+
+### `stake(amount, connectionUrl, demos)`
+
+Register a new validator or top up an existing one.
+
+```typescript
+const tx = await DemosTransactions.stake(
+    "1000000000000000000",                  // amount (bigint as string)
+    "https://my-validator.example.com",      // public RPC URL
+    demos,
+)
+await demos.confirm(tx)
+```
+
+The SDK validates `amount` as a positive bigint string and
+`connectionUrl` as a well-formed URL before signing — invalid input
+throws synchronously.
+
+### `unstake(demos)`
+
+Arms the unstake lock. Validator continues participating in consensus
+during the lock window.
+
+```typescript
+const tx = await DemosTransactions.unstake(demos)
+await demos.confirm(tx)
+```
+
+### `validatorExit(demos)`
+
+Withdraws the stake. Only valid after the lock has elapsed.
+
+```typescript
+const tx = await DemosTransactions.validatorExit(demos)
+await demos.confirm(tx)
+```
+
+## Read-side queries
+
+```typescript
+// Single validator's current state
+const info = await demos.getValidatorInfo(address)
+// { address, status, staked_amount, connection_url,
+//   first_seen, valid_at, unstake_requested_at, unstake_available_at }
+
+// Active validator set at a specific block (defaults to chain head)
+const validators = await demos.getValidators(blockNumber)
+
+// Just the staked amount as a bigint string
+const amount = await demos.getStakedAmount(address)
+```

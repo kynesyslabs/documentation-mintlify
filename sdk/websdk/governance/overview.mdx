@@ -1,0 +1,99 @@
+---
+title: "Governance"
+description: "SDK builders for proposal + vote transactions. Protocol details live under Backend / Network Governance."
+icon: "scale-balanced"
+---
+
+# Governance — SDK API
+
+This page is the SDK reference. For the on-chain mechanism (snapshot
+weights, tally rules, atomic activation, what's governable, safety
+bounds), see the protocol page:
+
+<Card title="Backend / Network Governance" href="../../../backend/network-governance/overview" icon="diagram-project">
+  Stackable Genesis — full protocol mechanics
+</Card>
+
+For an end-to-end walkthrough — stake, propose, vote, observe activation
+— see the [Quickstart](./quickstart).
+
+## Connect
+
+```typescript
+import { Demos, DemosTransactions } from "@kynesyslabs/demosdk/websdk"
+
+const demos = new Demos()
+await demos.connect("https://node.example.com")
+await demos.connectWallet(mnemonic)
+```
+
+## Builders
+
+### `proposeNetworkUpgrade(params, demos)`
+
+```typescript
+const proposalId = crypto.randomUUID()
+const tx = await DemosTransactions.proposeNetworkUpgrade(
+    {
+        proposalId,
+        proposedParameters: { networkFee: 12 },
+        rationale: "Bump fee from 10 to 12",
+        effectiveAtBlock: 100_000,
+    },
+    demos,
+)
+await demos.confirm(tx)
+```
+
+The SDK fail-fast validates input:
+
+- `proposalId` — required and trimmed before signing
+- `rationale` — must be a string (use `""` if none)
+- `effectiveAtBlock` — non-negative integer ≥ `currentBlock + votingWindow + gracePeriod`
+- `proposedParameters` — non-empty plain object; keys with `undefined` values are dropped before signing
+
+### `voteOnUpgrade(proposalId, approve, demos)`
+
+```typescript
+const tx = await DemosTransactions.voteOnUpgrade(proposalId, true, demos)
+await demos.confirm(tx)
+```
+
+Constraints (enforced by the node):
+
+- Voter must be in the validator-set snapshot at the proposal's
+  confirmation block
+- One vote per validator per proposal — final, non-revocable
+- Proposal must still be in `pending` status; votes after `tallyBlock`
+  are dropped
+
+## Read-side queries
+
+```typescript
+// Current active NetworkParameters (post-governance, post-fold)
+const params = await demos.getNetworkParameters()
+// { blockTimeMs, shardSize, minValidatorStake, networkFee, rpcFee, featureFlags }
+
+// Open proposals (pending or activating)
+const proposals = await demos.getActiveProposals()
+
+// Live tally for a specific proposal
+const tally = await demos.getProposalVotes(proposalId)
+// { totalStakedWeight, approveWeight, rejectWeight, threshold, passed, votes }
+
+// History of activated upgrades
+const history = await demos.getUpgradeHistory()
+```
+
+## Fees on the signed transaction
+
+Every transaction the SDK signs carries the **live** governance-driven
+`networkFee` and `rpcFee` baked into `tx.content.transaction_fee`. The
+SDK fetches `getNetworkParameters()` from the connected RPC at sign-time
+(with a 30-second per-RPC-URL TTL cache) so the value matches what the
+node will deduct.
+
+If the RPC is unreachable, the SDK falls back to deriving fees from the
+GCR edits — the older heuristic. This keeps offline signing functional
+but may diverge from the node's view; a fresh online sign is the
+canonical path.

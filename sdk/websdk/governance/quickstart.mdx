@@ -1,0 +1,148 @@
+---
+title: "Quickstart — End-to-End"
+description: "Stake as a validator, raise a proposal, gather votes, and watch it activate — all from one terminal."
+icon: "play"
+---
+
+# Quickstart
+
+Walks through the full upgradable-network flow from a fresh wallet:
+
+1. Connect + fund
+2. Stake as a validator
+3. Raise a `networkFee` proposal
+4. Vote on the proposal
+5. Wait for tally + activation
+6. Verify a fresh tx carries the new fee
+
+This assumes you have an RPC URL, a funded mnemonic, and that the
+network has at least 3 active validators (so a 2/3 vote is meaningful).
+
+## 0. Connect
+
+```typescript
+import { Demos, DemosTransactions } from "@kynesyslabs/demosdk/websdk"
+
+const demos = new Demos()
+await demos.connect("https://node.example.com")
+await demos.connectWallet(MY_MNEMONIC)
+```
+
+## 1. Stake
+
+```typescript
+const stakeTx = await DemosTransactions.stake(
+    "1000000000000000000",            // amount
+    "https://my-validator.example.com",  // your public RPC
+    demos,
+)
+await demos.confirm(stakeTx)
+```
+
+After confirmation, your address shows up in `getValidators()` with
+`status = "2"` (ACTIVE).
+
+## 2. Propose a parameter change
+
+```typescript
+const proposalId = crypto.randomUUID()
+const params = await demos.getNetworkParameters()
+const currentBlock = await demos.getLastBlockNumber()
+
+const proposeTx = await DemosTransactions.proposeNetworkUpgrade(
+    {
+        proposalId,
+        proposedParameters: { networkFee: 12 },
+        rationale: "Bump fee from 10 to 12",
+        // Must leave room for voting (100 blocks) + grace (50 blocks).
+        effectiveAtBlock: currentBlock + 200,
+    },
+    demos,
+)
+await demos.confirm(proposeTx)
+```
+
+## 3. Vote
+
+Each validator in the snapshot set runs:
+
+```typescript
+const voteTx = await DemosTransactions.voteOnUpgrade(
+    proposalId,
+    true,    // approve
+    demos,
+)
+await demos.confirm(voteTx)
+```
+
+Watch the live tally:
+
+```typescript
+const tally = await demos.getProposalVotes(proposalId)
+console.log(tally)
+// {
+//   proposalId,
+//   totalStakedWeight, approveWeight, rejectWeight,
+//   threshold, passed, votes: [...]
+// }
+```
+
+## 4. Wait for tally + activation
+
+The proposal transitions automatically:
+
+- At `snapshotBlock + VOTING_WINDOW_BLOCKS` (100 by default) the chain
+  tallies. Status flips `pending → activating` if 2/3 supermajority,
+  else `rejected`.
+- At `effectiveAtBlock` the chain folds the new value into
+  `NetworkParameters`. Status flips `activating → active`.
+
+You don't need to send any further transaction — just observe:
+
+```typescript
+// Repeat until status == "active"
+const proposals = await demos.getUpgradeHistory()
+console.log(proposals.find(p => p.proposalId === proposalId))
+
+// Confirm the live params reflect the change
+const live = await demos.getNetworkParameters()
+console.log(live.networkFee)   // 12
+```
+
+## 5. Verify a fresh tx carries the new fee
+
+The SDK fetches `getNetworkParameters()` at sign-time, so any
+transaction signed after activation carries the new `networkFee`:
+
+```typescript
+const tx = await demos.pay(recipient, 1, demos)
+console.log(tx.content.transaction_fee)
+// { network_fee: 12, rpc_fee: 10, additional_fee: 0 }
+```
+
+The same fee value will be deducted from the sender's balance when the
+node validates and applies the transaction.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Vote rejected: 'Voter is not in the snapshot validator set'">
+    Your validator registered **after** the proposal's `snapshotBlock`.
+    The snapshot is taken at proposal-confirmation time and is final —
+    validators added later don't get to vote on this specific proposal.
+  </Accordion>
+  <Accordion title="Proposal rejected: 'Proposer already has an open proposal'">
+    A validator can have at most one `pending`/`activating` proposal at
+    a time. Wait for the previous one to land (`active`/`rejected`) or
+    the next-block proposer to fill its slot.
+  </Accordion>
+  <Accordion title="Proposal rejected: 'parameter X is locked by proposal Y'">
+    Two `pending`/`activating` proposals cannot target the same key
+    simultaneously. The lock releases when the earlier proposal finalises.
+  </Accordion>
+  <Accordion title="Insufficient balance for stake">
+    The minimum stake is governed by `MIN_VALIDATOR_STAKE` env / Phase 1
+    `minValidatorStake` parameter. Default is `10^18`. Top up your
+    address before staking.
+  </Accordion>
+</AccordionGroup>
