@@ -1,0 +1,111 @@
+---
+title: "Tron"
+description: "TRON is a decentralized blockchain platform that focuses on high-throughput, scalability, and content distribution. The DEMOS TRON SDK lets you prepare and sign TRX transfer payloads from a Demos transaction."
+icon: "bolt"
+---
+
+# TRON
+
+TRON is a decentralized blockchain platform that focuses on high-throughput, scalability, and content distribution. The DEMOS TRON SDK lets you prepare and sign TRX transfer payloads from a Demos transaction.
+
+The SDK is built on top of [TronWeb](https://tronweb.network/docu/docs/intro/) and exposes a small set of helpers covering the common operations.
+
+### Setting up a wallet
+
+Install the [TronLink](https://www.tronlink.org/) wallet extension or any wallet that exposes a TRON private key. You will need the raw private key (with or without a leading `0x`) to connect the SDK.
+
+### Creating the SDK instance
+
+You need a TRON HTTP RPC endpoint. The TRON Foundation provides public mainnet and testnet endpoints; alternatively, [TronGrid](https://www.trongrid.io/) and [GetBlock](https://getblock.io/) offer hosted endpoints.
+
+```ts
+import { TRON } from "@kynesyslabs/demosdk/xm-websdk"
+
+const instance = await TRON.create("https://api.shasta.trongrid.io")
+```
+
+### Connecting your wallet
+
+```ts
+await instance.connectWallet("your_tron_private_key")
+```
+
+The private key may be passed with or without a leading `0x`; whitespace is trimmed automatically.
+
+### Getting your address
+
+```ts
+const address = instance.getAddress()
+// returns a base58 address (e.g. TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+```
+
+### Getting your balance
+
+```ts
+const balanceSun = await instance.getBalance(address)
+// balance is returned as a string in SUN
+// 1 TRX = 1,000,000 SUN
+```
+
+### Creating a transaction
+
+`preparePay` produces a signed TRX transfer ready to broadcast. The amount is specified in **SUN** (the smallest TRX unit, where 1 TRX = 1,000,000 SUN):
+
+```ts
+const tx = await instance.preparePay(
+    "TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", // receiver (base58)
+    "1000000",                            // 1 TRX, in SUN
+)
+```
+
+For multiple transfers in one batch, use `preparePays`:
+
+```ts
+const txs = await instance.preparePays([
+    { address: "TXXXXX...", amount: "1000000" },
+    { address: "TYYYYY...", amount: "2000000" },
+])
+```
+
+### Broadcasting a transaction
+
+```ts
+const response = await instance.sendTransaction(tx)
+// response.result is "success" or "error"
+// response.hash is the txid on success
+```
+
+### Signing messages
+
+```ts
+const message = "Hello, world!"
+
+const signature = await instance.signMessage(message)
+
+const verified = await instance.verifyMessage(
+    message,
+    signature,
+    instance.getAddress(),
+)
+```
+
+### Hacking
+
+The DEMOS TRON SDK is a thin wrapper around [TronWeb](https://github.com/tronprotocol/tronweb). For advanced operations (smart contracts, TRC10/TRC20 tokens, resources, etc.) you can access the underlying TronWeb instance directly:
+
+| Property            | Type       | Description                                      |
+| ------------------- | ---------- | ------------------------------------------------ |
+| `instance.provider` | `TronWeb`  | Provides read-only access to blockchain data     |
+| `instance.wallet`   | `TronWeb`  | Initialized with a private key for signing       |
+
+### Resources
+
+1. [Official TRON Website](https://tron.network/)
+2. [Official TRON Developer Docs](https://developers.tron.network/)
+3. [TronWeb GitHub](https://github.com/tronprotocol/tronweb)
+4. [Tronscan Block Explorer](https://tronscan.org/)
+5. [Shasta Testnet Faucet](https://www.trongrid.io/shasta)
+
+### API Reference
+
+[https://kynesyslabs.github.io/demosdk-api-ref/classes/xmwebsdk.TRON.html](https://kynesyslabs.github.io/demosdk-api-ref/classes/xmwebsdk.TRON.html)
