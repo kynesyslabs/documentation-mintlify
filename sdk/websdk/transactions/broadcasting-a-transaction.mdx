@@ -61,3 +61,78 @@ To execute your transaction, send back the validity data to the node.
 ```typescript
 const res2 = await demos.broadcast(validityData)
 ```
+
+## Broadcast and wait for inclusion
+
+`demos.broadcast()` returns as soon as the node accepts the transaction; it does **not** wait for the transaction to be included in a block. If you need a deterministic confirmation, use `demos.broadcastAndWait()` (added in v2.12.0). It broadcasts and then polls the node's `getTransactionStatus` RPC until the transaction reaches a terminal state — `included` or `failed` — or the timeout elapses.
+
+```typescript
+const { broadcast, status } = await demos.broadcastAndWait(validityData)
+
+if (status.state === "included") {
+    console.log("included at block", status.blockNumber)
+} else {
+    console.error("transaction failed at block", status.blockNumber)
+}
+```
+
+The method accepts an optional options object:
+
+| Option | Default | Purpose |
+| ------ | ------- | ------- |
+| `timeoutMs` | `30000` | Total time to wait for inclusion before throwing `BroadcastTimeoutError`. |
+| `pollIntervalMs` | `500` | Delay between status polls. |
+
+```typescript
+const result = await demos.broadcastAndWait(validityData, {
+    timeoutMs: 60_000,
+    pollIntervalMs: 1_000,
+})
+```
+
+The lower-level `DemosTransactions.broadcastAndWait(validityData, demos, opts)` accepts an additional `failFastOnBroadcastError` flag. When set to `true`, the call throws `BroadcastFailedError` immediately if the broadcast itself can't reach the node (e.g. `ECONNREFUSED`, `ENOTFOUND`). HTTP 5xx responses are **not** treated as fail-fast — the server did answer, so the tx may still have landed and the SDK keeps polling.
+
+## Error types
+
+The transport layer surfaces a small, focused set of typed errors. Catch them by class to handle each case precisely:
+
+| Error | Thrown by | Meaning |
+| ----- | --------- | ------- |
+| `TransportError` | Any RPC method on `Demos` | The HTTP request to the node exhausted its retry budget. Carries `attempts` (total attempts including the final failing one) and `cause` (the underlying `AxiosError`). |
+| `BroadcastTimeoutError` | `broadcastAndWait` | The broadcast was accepted but no terminal state was observed before `timeoutMs` elapsed. Carries `txHash`, `lastSeenState`, and `elapsedMs` so callers can resume polling on their own. |
+| `BroadcastFailedError` | `broadcastAndWait` (when `failFastOnBroadcastError: true`) | The broadcast itself could not reach the node. Carries `txHash` and `cause`. |
+| `SubDemPrecisionError` | `transfer`, `pay`, `sign` (when amount has sub-DEM precision and node is pre-fork) | Sub-DEM precision would be silently truncated on the legacy wire. See [Amounts & Denominations](./denominations#sub-dem-precision-guard). Carries `amountOs` and `subDemRemainderOs`. |
+
+```typescript
+import {
+    BroadcastTimeoutError,
+    BroadcastFailedError,
+    TransportError,
+    SubDemPrecisionError,
+} from "@kynesyslabs/demosdk/websdk"
+
+try {
+    const result = await demos.broadcastAndWait(validityData, { timeoutMs: 10_000 })
+    console.log("status:", result.status.state)
+} catch (err) {
+    if (err instanceof BroadcastTimeoutError) {
+        console.warn(
+            `Timed out after ${err.elapsedMs}ms ` +
+            `(txHash=${err.txHash}, lastSeenState=${err.lastSeenState}). ` +
+            `Resume polling with demos.rpcCall('getTransactionStatus', { hash: err.txHash }).`
+        )
+    } else if (err instanceof TransportError) {
+        console.error(
+            `Transport gave up after ${err.attempts} attempts:`, err.cause
+        )
+    } else {
+        throw err
+    }
+}
+```
+
+## Retry semantics
+
+The transport layer automatically retries on HTTP 5xx responses and honours `Retry-After` headers (seconds or HTTP-date). Backoff is capped at 8 seconds (`MAX_BACKOFF_MS`) so a misbehaving node cannot stall the SDK indefinitely. The `attempts` count surfaced by `TransportError` reflects the total number of attempts including the final failing one.
+
+`rpcCall` and `_doPost` retry independently — `_doPost` retries on transport-level failures, `rpcCall` retries on RPC-level errors — so retry budgets do not multiply across layers.
