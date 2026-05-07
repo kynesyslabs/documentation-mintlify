@@ -25,20 +25,31 @@ await demos.connectWallet(mnemonic)
 
 ### 2. Create a transaction
 
-You can now create a transaction by passing the address and the amount to `demos.transfer`.
+You can now create a transaction by passing the address and the amount to `demos.transfer`. The amount can be either a `bigint` in **OS** (preferred, full precision; `1 DEM = 10^9 OS`) or a legacy `number` in whole **DEM** (deprecated, removed in v4).
 
-```javascript
-// 2. Create a transaction
+```typescript
+import { denomination } from "@kynesyslabs/demosdk/websdk"
+
+// 2a. Preferred — bigint OS via the denomination helper
 const tx = await demos.transfer(
     "0x6690580a02d2da2fefa86e414e92a1146ad5357fd71d594cc561776576857ac5",
-    100,
+    denomination.demToOs(100),  // 100 DEM → 100_000_000_000n OS
 )
+
+// 2b. Equivalent — raw bigint OS literal
+const tx2 = await demos.transfer(
+    "0x...",
+    100_000_000_000n,
+)
+
+// 2c. Legacy — number in whole DEM (deprecated)
+const tx3 = await demos.transfer("0x...", 100)
 ```
 
-The transcation returned by `demos.transfer` is signed using the wallet connected to the `demos` object.
+The transaction returned by `demos.transfer` is signed using the wallet connected to the `demos` object.
 
 <Info>
-`demos.transfer` is an alias to `demos.pay`
+`demos.transfer` is an alias to `demos.pay`. See [Amounts & Denominations](/sdk/websdk/transactions/denominations) for the full denomination reference, including `getNetworkInfo` fork detection and the `SubDemPrecisionError` guard.
 </Info>
 
 ### 3. Broadcasting the transaction

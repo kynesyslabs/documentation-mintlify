@@ -1,0 +1,132 @@
+---
+title: "Human Passport"
+description: "Prove humanity for your DEMOS address using Human Passport (formerly Gitcoin Passport). Verifies you are a unique human via on-chain stamps and off-chain attestations."
+icon: "user-check"
+---
+
+# Human Passport
+
+You can attach a Human Passport (formerly Gitcoin Passport) Proof of Personhood score to your DEMOS address by following these steps. The default score threshold the node enforces when linking is **20**.
+
+### 1. Connect your wallet
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { Identities } from "@kynesyslabs/demosdk/abstraction";
+
+// the DEMOS rpc
+const rpc = "https://node2.demos.sh"
+
+const demos = new Demos();
+await demos.connect(rpc);
+await demos.connectWallet(mnemonic);
+```
+
+### 2. Fetch the Human Passport Score
+
+Retrieve the Human Passport score for the EVM address you want to link. The score is fetched from the node's cached data (not directly from the Human Passport API) via the `gcr_routine` mechanism.
+
+```typescript
+const identities = new Identities();
+
+const address = "0x..." // EVM address with a Human Passport
+
+const scoreResponse = await identities.getHumanPassportScore(demos, address)
+console.log("human passport score: ", scoreResponse)
+```
+
+### 3. Send an Identity request
+
+Build a `HumanPassportIdentityData` payload and submit the link transaction.
+
+Required and optional fields:
+
+- `address` — required EVM address being verified.
+- `verificationMethod` — required, either `"api"` or `"onchain"`.
+- `chainId` — required when `verificationMethod` is `"onchain"`. The SDK throws if it is missing.
+- `signature` — optional, for enhanced verification.
+- `referralCode` — optional.
+
+The node verifies the Human Passport score and persists the identity if the score meets the threshold (default: 20).
+
+```typescript
+// API verification
+const payload = {
+    address: "0x...",
+    verificationMethod: "api" as const,
+}
+
+// or, on-chain verification (chainId required)
+const payloadOnchain = {
+    address: "0x...",
+    verificationMethod: "onchain" as const,
+    chainId: 10, // e.g., Optimism
+}
+
+const validityData = await identities.addHumanPassportIdentity(demos, payload)
+console.log("validity data: ", validityData)
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Human Passport identity linked. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 11
+  }
+}
+```
+
+### 4. Getting linked Human Passport identities
+
+After the confirmation block has been forged, you can list the Human Passport identities linked to a DEMOS address. The method returns an array of `SavedHumanPassportIdentity` records (address, score, stamps, verification method, timestamps).
+
+```typescript
+const demosAddress = await demos.getEd25519Address()
+const passportIds = await identities.getHumanPassportIdentities(
+    demos,
+    demosAddress,
+)
+console.log(passportIds)
+```
+
+### 5. Removing a Human Passport identity
+
+You can create a transaction to remove a linked Human Passport identity. Only the EVM address is needed.
+
+```typescript
+const validityData = await identities.removeHumanPassportIdentity(
+    demos,
+    "0x...",
+)
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Human Passport identity removed. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 24
+  }
+}
+```

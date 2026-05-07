@@ -1,0 +1,152 @@
+---
+title: "Amounts & Denominations"
+description: "How to pass amounts to DEMOS transactions: DEM, OS, BigInt, and the sub-DEM precision guard."
+icon: "scale-balanced"
+---
+
+# Amounts & Denominations
+
+DEMOS uses two denominations for native tokens:
+
+| Denomination | Description |
+| ------------ | ----------- |
+| **DEM**      | Human-readable unit. `1 DEM` is what users see in wallets and explorers. |
+| **OS**       | Smallest indivisible unit on the wire. `1 DEM = 10^9 OS`. |
+
+The conversion factor is exposed as `OS_PER_DEM = 10n ** 9n`.
+
+<Info>
+The OS denomination ships behind the **`osDenomination` fork**. Pre-fork nodes accept only whole-DEM amounts on the wire (legacy `number` shape). Post-fork nodes accept full sub-DEM precision as `bigint` OS. The SDK detects the active wire format automatically — see [Fork detection](#fork-detection) below.
+</Info>
+
+## Passing amounts to `transfer` and `pay`
+
+`Demos.transfer(to, amount)` and its alias `Demos.pay(to, amount)` accept either:
+
+- **`bigint`** (preferred) — the amount in OS
+- **`number`** (legacy, deprecated) — the amount in whole DEM, auto-converted to OS internally
+
+```typescript
+import { Demos, denomination } from "@kynesyslabs/demosdk/websdk"
+
+const demos = new Demos()
+await demos.connect("https://node2.demos.sh")
+await demos.connectWallet(mnemonic)
+
+// Preferred: bigint OS, full precision
+await demos.pay("0x...", 100_000_000_000n)            // 100 DEM in OS
+await demos.transfer("0x...", denomination.demToOs("1.5"))  // 1.5 DEM
+
+// Legacy: number DEM (will be removed in v4)
+await demos.pay("0x...", 100)                         // 100 DEM
+```
+
+`denomination.demToOs(input)` accepts a number or string and returns a `bigint` in OS.
+
+<Warning>
+The `number` overload is deprecated. New code should pass `bigint` OS amounts. The legacy path remains for v2 callers and will be removed in v4.
+</Warning>
+
+## The denomination module
+
+The SDK exposes a small set of helpers under `denomination`:
+
+| Helper | Purpose |
+| ------ | ------- |
+| `demToOs(dem: number \| string): bigint` | Convert DEM (human-readable) to OS (bigint). |
+| `osToDem(os: bigint): string` | Convert OS to a human-readable DEM string. |
+| `parseOsString(osString: string): bigint` | Parse a wire-format OS string into a bigint. |
+| `toOsString(os: bigint): string` | Serialize an OS bigint to its wire string form. |
+| `formatDem(os: bigint): string` | Format OS as a display string with `DEM` suffix. |
+| `OS_PER_DEM` | Constant `10n ** 9n`. |
+| `OS_DECIMALS` | Constant `9`. |
+
+```typescript
+import { denomination } from "@kynesyslabs/demosdk/websdk"
+
+const os = denomination.demToOs("1.500000001")  // 1500000001n
+const back = denomination.osToDem(os)           // "1.500000001"
+const display = denomination.formatDem(os)      // "1.500000001 DEM"
+```
+
+## Fork detection
+
+The SDK exposes the node's fork-activation status through `Demos.getNetworkInfo()`:
+
+```typescript
+const info = await demos.getNetworkInfo()
+// {
+//   forks: {
+//     osDenomination: {
+//       activationHeight: 12345 | null,
+//       activated: true | false,
+//       currentHeight: 67890
+//     }
+//   }
+// }
+```
+
+The first call hits the node's `getNetworkInfo` RPC. The result is cached on the `Demos` instance for its lifetime, keyed by the active RPC URL. To re-detect after a node upgrade, construct a fresh `Demos` instance.
+
+Failure modes:
+
+- If the node is unreachable or returns a malformed response, `getNetworkInfo()` returns `null`.
+- The SDK assumes **pre-fork** wire format in that case and emits a one-time `console.warn` recommending the operator upgrade the target node.
+- Transient outages are recovered via a 30-second TTL on the failure memo, so the SDK retries automatically.
+
+You don't normally need to call `getNetworkInfo()` yourself — `transfer`/`pay`/`sign` consult the cached fork status automatically. Calling it is useful when you want to display fork status to your users or branch your application logic.
+
+## Sub-DEM precision guard
+
+When the connected node is **pre-fork** and your code submits a `bigint` OS amount that carries sub-DEM precision (i.e. `amount % OS_PER_DEM !== 0n`), the SDK refuses to sign the transaction and throws `SubDemPrecisionError` instead. This prevents silent truncation on the legacy DEM-`number` wire.
+
+```typescript
+import { Demos, denomination, SubDemPrecisionError } from "@kynesyslabs/demosdk/websdk"
+
+const demos = new Demos()
+await demos.connect(rpc)
+await demos.connectWallet(mnemonic)
+
+try {
+    // 1.5 DEM = 1_500_000_000n OS — half a DEM is sub-DEM precision
+    await demos.pay("0x...", 1_500_000_000n)
+} catch (err) {
+    if (err instanceof SubDemPrecisionError) {
+        console.warn(
+            `Cannot send sub-DEM amount on a pre-fork node. ` +
+            `OS amount: ${err.amountOs}, sub-DEM remainder: ${err.subDemRemainderOs}`,
+        )
+        // Round to whole DEM, or upgrade the target node.
+    } else {
+        throw err
+    }
+}
+```
+
+`SubDemPrecisionError` exposes:
+
+- `amountOs: bigint` — the OS amount the caller passed
+- `subDemRemainderOs: bigint` — the portion smaller than 1 DEM (i.e. `amount % OS_PER_DEM`)
+
+The guard is **inert on post-fork nodes** — full sub-DEM precision is accepted natively.
+
+## Reading balances
+
+`Demos.getAddressInfo(address)` returns the balance in OS as a `bigint` on post-fork nodes. The SDK widens the wire `balance` field to `number | string` and normalizes it internally, so you always receive a `bigint` from the public API.
+
+```typescript
+const info = await demos.getAddressInfo(address)
+console.log("balance (OS):", info.balance)                       // bigint
+console.log("balance (DEM):", denomination.osToDem(info.balance)) // string
+```
+
+## Migration cheat-sheet
+
+| You used to write... | Now write... |
+| -------------------- | ------------ |
+| `demos.pay(to, 100)` | `demos.pay(to, denomination.demToOs(100))` or `demos.pay(to, 100_000_000_000n)` |
+| `demos.transfer(to, 1.5)` | `demos.transfer(to, denomination.demToOs("1.5"))` |
+| Compare balance to a numeric DEM | `info.balance >= denomination.demToOs("1.0")` (bigint comparison) |
+| Display a balance | `denomination.formatDem(info.balance)` → `"1.5 DEM"` |
+
+The legacy `number` API still works against pre-fork nodes for whole-DEM amounts. Sub-DEM precision and post-fork wire format require the `bigint` OS shape.

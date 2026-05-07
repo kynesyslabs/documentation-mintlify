@@ -88,6 +88,7 @@
                 "group": "Transactions",
                 "pages": [
                   "sdk/websdk/transactions/overview",
+                  "sdk/websdk/transactions/denominations",
                   "sdk/websdk/transactions/creating-a-transaction",
                   "sdk/websdk/transactions/signing-a-transaction",
                   "sdk/websdk/transactions/broadcasting-a-transaction"
@@ -245,7 +246,11 @@
                   "sdk/web2/identities/twitter",
                   "sdk/web2/identities/github",
                   "sdk/web2/identities/discord",
-                  "sdk/web2/identities/telegram"
+                  "sdk/web2/identities/telegram",
+                  "sdk/web2/identities/nomis",
+                  "sdk/web2/identities/ethos",
+                  "sdk/web2/identities/human-passport",
+                  "sdk/web2/identities/unstoppable-domains"
                 ]
               }
             ]

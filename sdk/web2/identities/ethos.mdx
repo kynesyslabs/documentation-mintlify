@@ -1,0 +1,138 @@
+---
+title: "Ethos"
+description: "Link an Ethos reputation score to your DEMOS address. Ethos provides peer-reviewed credibility scores for EVM wallets."
+icon: "shield-check"
+---
+
+# Ethos
+
+You can associate an Ethos-scored EVM wallet with your DEMOS address by following these steps.
+
+### 1. Connect your wallet
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { Identities } from "@kynesyslabs/demosdk/abstraction";
+
+// the DEMOS rpc
+const rpc = "https://node2.demos.sh"
+
+const demos = new Demos();
+await demos.connect(rpc);
+await demos.connectWallet(mnemonic);
+```
+
+### 2. Fetch the Ethos Score
+
+Retrieve the Ethos score for the EVM wallet you want to link. The score is fetched from the node via the `gcr_routine` mechanism.
+
+The `walletAddress` argument must be a valid EVM address (`0x[a-fA-F0-9]{40}`); the SDK throws if the format is invalid.
+
+```typescript
+const identities = new Identities();
+
+const walletAddress = "0x..." // EVM wallet to score
+
+const scoreResponse = await identities.getEthosScore(demos, walletAddress)
+console.log("ethos score: ", scoreResponse)
+```
+
+### 3. Send an Identity request
+
+Build an `EthosWalletIdentity` payload and submit the link transaction.
+
+The payload is validated client-side before being sent:
+
+- `chain` — required non-empty string (e.g. `"evm"`).
+- `subchain` — required non-empty string (e.g. `"ethereum"`, `"base"`).
+- `address` — required EVM address matching `0x[a-fA-F0-9]{40}`.
+- `score` — required, must be a finite, non-negative number.
+- `lastSyncedAt` — required ISO date string (must parse with `Date.parse`).
+- `profileId` — optional Ethos profile id (number, if provided).
+- `metadata` — optional object (e.g. `displayName`, `username`).
+
+```typescript
+const payload = {
+    chain: "evm",
+    subchain: "ethereum",
+    address: "0x...",
+    score: 1450,
+    lastSyncedAt: new Date().toISOString(),
+    // optional
+    profileId: 12345,
+    metadata: {
+        displayName: "your display name",
+        username: "your-username",
+    },
+}
+
+const validityData = await identities.addEthosIdentity(demos, payload)
+console.log("validity data: ", validityData)
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Ethos identity linked. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 14
+  }
+}
+```
+
+### 4. Getting linked Ethos identities
+
+After the confirmation block has been forged, you can retrieve the Ethos identities linked to an address. Pass an `address` to query a specific account or omit it to use the connected wallet's address.
+
+```typescript
+const ethosIds = await identities.getEthosIdentities(demos)
+console.log(ethosIds)
+```
+
+### 5. Removing an Ethos identity
+
+You can create a transaction to remove a linked Ethos wallet. The removal payload only needs the identifying fields:
+
+- `chain` — required non-empty string.
+- `subchain` — required non-empty string.
+- `address` — required EVM address (`0x[a-fA-F0-9]{40}`).
+
+```typescript
+const removePayload = {
+    chain: "evm",
+    subchain: "ethereum",
+    address: "0x...",
+}
+
+const validityData = await identities.removeEthosIdentity(demos, removePayload)
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Ethos identity removed. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 26
+  }
+}
+```

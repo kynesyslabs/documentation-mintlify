@@ -1,0 +1,146 @@
+---
+title: "Unstoppable Domains"
+description: "Link an Unstoppable Domain (e.g., brad.crypto) to your DEMOS address. Supports EVM and Solana signing flows."
+icon: "globe"
+---
+
+# Unstoppable Domains
+
+You can associate an Unstoppable Domain (e.g. `brad.crypto`) with your DEMOS address. The SDK supports both EVM (MetaMask) and Solana (Phantom) signing flows: you sign a challenge with one of the domain's authorized addresses, and that signature is submitted to the DEMOS network for verification.
+
+The end-to-end flow:
+
+1. **Resolve** the domain to fetch its authorized addresses and metadata.
+2. **Generate a challenge** that includes your Demos public key and the chosen signing address.
+3. **Sign the challenge** externally with the user's wallet (MetaMask `personal_sign` for EVM, Phantom for Solana).
+4. **Submit** the signature, challenge, and resolution data to link the identity.
+
+### 1. Connect your wallet
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { Identities } from "@kynesyslabs/demosdk/abstraction";
+
+// the DEMOS rpc
+const rpc = "https://node2.demos.sh"
+
+const demos = new Demos();
+await demos.connect(rpc);
+await demos.connectWallet(mnemonic);
+```
+
+### 2. Resolve the Domain
+
+Use `resolveUDDomain` to fetch the unified resolution result for the domain. The returned `UnifiedDomainResolution` contains the network, registry type, and the list of `authorizedAddresses` that can sign the linking challenge.
+
+```typescript
+const identities = new Identities();
+
+const domain = "brad.crypto"
+const resolutionData = await identities.resolveUDDomain(demos, domain)
+console.log(resolutionData)
+
+// Pick a signing address from the authorized addresses returned by the resolver
+const signingAddress = resolutionData.authorizedAddresses[0].address
+```
+
+The signing address must either be the domain owner or appear in `resolutionData.authorizedAddresses`; otherwise `addUnstoppableDomainIdentity` will throw.
+
+### 3. Generate a Challenge and Sign It
+
+Generate a challenge string that ties the signing address to your Demos public key, then have the user sign it with their wallet. For EVM, this is typically a MetaMask `personal_sign` call; for Solana, use Phantom.
+
+```typescript
+// Use the Demos public key (ed25519) for the challenge
+const demosPublicKey = await demos.getEd25519Address()
+
+// Generate the challenge string locally
+const challenge = identities.generateUDChallenge(
+    demosPublicKey,
+    signingAddress,
+)
+
+// User signs the challenge externally (EVM example with MetaMask)
+const signature = await ethereum.request({
+    method: "personal_sign",
+    params: [challenge, signingAddress],
+})
+```
+
+For Solana, prompt the user to sign `challenge` with Phantom and pass the resulting signature in the next step.
+
+### 4. Send an Identity request
+
+Submit the signing address, signature, challenge, and the resolution data returned in step 2. An optional `referralCode` may be passed as the final argument.
+
+```typescript
+const validityData = await identities.addUnstoppableDomainIdentity(
+    demos,
+    signingAddress,
+    signature,
+    challenge,
+    resolutionData,
+    // referralCode (optional)
+)
+console.log("validity data: ", validityData)
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Unstoppable Domain identity linked. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 13
+  }
+}
+```
+
+### 5. Getting linked UD identities
+
+After the confirmation block has been forged, you can list the Unstoppable Domain identities linked to an address. Pass an `address` to query a specific account, or omit it to use the connected wallet's address.
+
+```typescript
+const udIds = await identities.getUDIdentities(demos)
+console.log(udIds)
+```
+
+### 6. Removing a UD identity
+
+You can create a transaction to unlink a domain. Only the domain string is needed.
+
+```typescript
+const validityData = await identities.removeUnstoppableDomainIdentity(
+    demos,
+    "brad.crypto",
+)
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Unstoppable Domain identity removed. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 27
+  }
+}
+```

@@ -1,0 +1,122 @@
+---
+title: "Nomis"
+description: "Link a Nomis wallet score to your DEMOS address. Nomis provides on-chain reputation scores derived from wallet activity across multiple chains."
+icon: "chart-line"
+---
+
+# Nomis
+
+You can associate a Nomis-scored wallet with your DEMOS address by following these steps. Nomis works with wallets across multiple chains (e.g. `"evm"`, `"solana"`); supply the optional `chain` and `subchain` parameters when fetching the score to target a specific network.
+
+### 1. Connect your wallet
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { Identities } from "@kynesyslabs/demosdk/abstraction";
+
+// the DEMOS rpc
+const rpc = "https://node2.demos.sh"
+
+const demos = new Demos();
+await demos.connect(rpc);
+await demos.connectWallet(mnemonic);
+```
+
+### 2. Fetch the Nomis Score
+
+Retrieve the Nomis score for the wallet you want to link. The score is fetched from the node's cached data via the `gcr_routine` mechanism.
+
+```typescript
+const identities = new Identities();
+
+const walletAddress = "0x..." // wallet to score
+const chain = "evm"           // optional, e.g. "evm" or "solana"
+const subchain = "ethereum"   // optional subchain / network identifier
+const scoreType = 1           // optional Nomis score type identifier
+
+const scoreResponse = await identities.getNomisScore(
+    demos,
+    walletAddress,
+    chain,
+    subchain,
+    scoreType,
+)
+console.log("nomis score: ", scoreResponse)
+```
+
+The `chain`, `subchain`, and `scoreType` parameters are all optional; omit them to use Nomis defaults.
+
+### 3. Send an Identity request
+
+Build a `NomisWalletIdentity` payload using the score data and submit the link transaction. The minimum required fields are `chain`, `subchain`, `address`, `score`, `scoreType`, and `lastSyncedAt`.
+
+```typescript
+const payload = {
+    chain: "evm",
+    subchain: "ethereum",
+    address: walletAddress,
+    score: 750,
+    scoreType: 1,
+    lastSyncedAt: new Date().toISOString(),
+    // optional
+    mintedScore: null,
+    metadata: {
+        referralCode: "your-referral-code",
+    },
+}
+
+const validityData = await identities.addNomisIdentity(demos, payload)
+console.log("validity data: ", validityData)
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Nomis identity linked. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 12
+  }
+}
+```
+
+### 4. Getting linked Nomis identities
+
+Linked Nomis identities are exposed through the standard identity bundle on the DEMOS account. After the confirmation block has been forged, query the account's linked identities through the RPC to confirm the link.
+
+### 5. Removing a Nomis identity
+
+You can create a transaction to remove a linked Nomis wallet. The same `NomisWalletIdentity` payload shape is used to identify which entry to remove.
+
+```typescript
+const validityData = await identities.removeNomisIdentity(demos, payload)
+
+if (validityData.result == 200) {
+    const res = await demos.broadcast(validityData)
+    console.log(res)
+}
+```
+
+A successful transaction response should look like this:
+
+```json
+{
+  "result": 200,
+  "response": {
+    "message": "Nomis identity removed. Transaction applied."
+  },
+  "require_reply": false,
+  "extra": {
+    "confirmationBlock": 25
+  }
+}
+```
