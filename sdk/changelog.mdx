@@ -6,6 +6,248 @@ icon: "clock-rotate-left"
 
 # Changelog
 
+## v3.1.0
+
+_May 7, 2026_
+
+Polish release on top of v3.0.0. Bug fix for serializer key ordering and JSDoc/type accuracy improvements.
+
+### Fixes
+
+- `fix(serializer)`: preserve `transaction_fee` source key order via spread, ensuring stable wire serialization.
+- `docs+types`: JSDoc accuracy fix, return type fix, and stale comment cleanup across the public API surface.
+
+---
+
+## v3.0.0
+
+_May 7, 2026_
+
+Major release. Introduces sub-DEM denomination via the `osDenomination` fork. `1 DEM = 10^9 OS`, exposed through a new `denomination` module and `bigint`-aware public API. See [Amounts & Denominations](/sdk/websdk/transactions/denominations) for the full developer guide.
+
+<Note>
+v3.0.0 was first published as `3.0.0-rc.1` on May 7, 2026 and promoted to `3.0.0` the same release window. The two share the same feature set; v3.1.0 then layered on the serializer fix above.
+</Note>
+
+### New `denomination` module
+
+Exports: `demToOs`, `osToDem`, `parseOsString`, `toOsString`, `formatDem`, `MIN_AMOUNT_OS`, `ZERO_OS`, plus constants `OS_DECIMALS = 9` and `OS_PER_DEM = 10n ** 9n`.
+
+```ts
+import { demToOs, osToDem, OS_PER_DEM } from "@kynesyslabs/demosdk/denomination"
+
+const amountOs = demToOs("1.5")        // 1_500_000_000n
+const amountDem = osToDem(amountOs)    // "1.5"
+```
+
+### Public API widened to `bigint`
+
+`Demos.transfer` and `Demos.pay` now accept `number | bigint`. `bigint` (OS) is the preferred form going forward — `number` (whole DEM) continues to work but is deprecated and will be removed in v4.
+
+```ts
+// preferred
+await demos.transfer(to, 1_500_000_000n)        // 1.5 DEM in OS
+
+// still accepted, deprecated
+await demos.transfer(to, 1)                      // 1 DEM
+```
+
+### Fork detection: `Demos.getNetworkInfo()`
+
+New RPC `Demos.getNetworkInfo(): Promise<NetworkInfo | null>` reports whether the connected node is post-fork. Results are cached per RPC URL with a 30-second failure-TTL recovery window so transient errors don't pin a node to "unknown" forever.
+
+### `SubDemPrecisionError`
+
+Thrown when a caller submits sub-DEM precision against a pre-fork node, where the value would otherwise silently truncate. Carries `amountOs` and `subDemRemainderOs` for diagnostics.
+
+### Wire format widening
+
+`TransactionContent.amount`, `TxFee.*`, `RawTransaction.{amount,networkFee,rpcFee,additionalFee}`, and `StatusNative.balance` now accept `number | string`. The SDK normalizes everything to `bigint` internally.
+
+### Dual-format `serializerGate`
+
+The serializer emits the wire shape that matches the cached fork status of the target node, so the same client transparently talks to pre-fork and post-fork validators.
+
+### Bug fixes carried in v3.0
+
+- `STORAGE_PROGRAM_CONSTANTS.FEE_PER_CHUNK` corrected from `1n` to `OS_PER_DEM`. Pre-v3.0 this was a 10⁹× under-billing of storage chunk fees.
+- `getAddressInfo(...).balance` now returns `bigint` OS on post-fork nodes.
+
+---
+
+## v2.12.2
+
+_May 6, 2026_
+
+Validator staking, on-chain governance, and a TS strict-mode fix. Brings PR #84 (`feat-upgradable-network`) into a minor release. See [Validator Staking](/sdk/websdk/validator-staking/overview) and [Governance](/sdk/websdk/governance/overview).
+
+### Validator staking
+
+- New `DemosTransactions.stake(amount: string, connectionUrl: string, demos)` — bigint-encoded amount string in OS; `connectionUrl` is required on first stake.
+- New `DemosTransactions.unstake(demos)` and `DemosTransactions.claimUnstakedAmount(demos)`.
+- New read methods on `Demos`: `getValidatorInfo(address)`, `getValidators(blockNumber?)`, `getStakedAmount(address)`.
+
+### On-chain governance
+
+- New `DemosTransactions.proposeNetworkUpgrade(params, demos)` — `params.proposalId` (UUID), `params.proposedParameters: Partial<NetworkParameters>`, `params.rationale` (≤ 1024 bytes), `params.effectiveAtBlock`. Only active validators may propose.
+- New `DemosTransactions.voteOnUpgrade(proposalId, approve, demos)` — one vote per proposal; voter must be in the snapshot validator set.
+- New read methods on `Demos`: `getNetworkParameters()`, `getActiveProposals()`, `getProposalVotes(id)`, `getUpgradeHistory()`.
+
+### Other
+
+- Replace `Math.random()` with `crypto.getRandomValues()` for secure random generation across multiple modules.
+- Validate network parameters before caching (`_getNetworkParametersCached`).
+- Simplify `stake()` validation; add JSDoc to internal helpers.
+- Preserve `Partial<NetworkParameters>` typing in `proposeNetworkUpgrade`.
+- Remove invalid `override` modifier on the `cause` property in error classes (TS strict-mode fix).
+
+---
+
+## v2.12.1
+
+_May 5, 2026_
+
+Transport-layer hardening and deterministic broadcast helpers. See [Broadcasting a Transaction](/sdk/websdk/transactions/broadcasting-a-transaction#error-types).
+
+### `broadcastAndWait`
+
+- New `Demos.broadcastAndWait(validityData, opts?)` — deterministic tx-inclusion polling. Throws `BroadcastTimeoutError` on timeout. Returns `{ broadcast, status: { state, blockNumber? } }`.
+- Lower-level `DemosTransactions.broadcastAndWait` adds an opt-in `failFastOnBroadcastError` flag that throws `BroadcastFailedError` immediately when the broadcast can't reach the node (`ECONNREFUSED`, `ENOTFOUND`). HTTP 5xx is **not** treated as fail-fast — the server did answer.
+
+### Transport layer
+
+- HTTP `Retry-After` header support (seconds or HTTP-date).
+- `MAX_BACKOFF_MS = 8000` cap on exponential backoff so a misbehaving node can't stall a single call indefinitely.
+- Accurate attempt count in `TransportError`.
+- Stop forwarding `rpcCall`'s `retries` argument into the `_doPost` transport budget — retry budgets no longer multiply across layers.
+
+### New error class
+
+- `TransportError` (in `@kynesyslabs/demosdk/websdk`) carrying `attempts` and `cause`.
+
+---
+
+## v2.12.0
+
+_May 1, 2026_
+
+Adds the foundational denomination utilities that v3.0.0 builds on, plus storage-program test cleanup.
+
+- New `denomination` module with DEM/OS conversion utilities (consumed publicly starting in v3.0.0).
+- Updated storage program test names for clarity.
+
+---
+
+## v2.11.6
+
+_April 20, 2026_
+
+- Add `sign` and `read` methods to `demos.storagePrograms` for streamlined storage-program transaction construction.
+
+---
+
+## v2.11.5
+
+_March 26, 2026_
+
+L2PS messaging client and protocol types (PR #82, `feat/l2ps-messaging-types`).
+
+- New `L2PS` class exported from `@kynesyslabs/demosdk/l2ps`.
+  - Factory: `L2PS.create(privateKey?, iv?)`.
+  - Registry: `getInstance`, `getInstances`, `hasInstance`, `removeInstance`.
+- Instance methods:
+  - `encryptTx(tx, senderIdentity?)` — wraps a transaction in `L2PSEncryptedPayload`. The wrapped tx type becomes `l2psEncryptedTx`.
+  - `decryptTx(encryptedTx)` — recovers the inner transaction.
+
+---
+
+## v2.11.4
+
+_March 16, 2026_
+
+- `fix(abstraction)`: export `IdentityAttestationPayload` and `IdentityCommitmentPayload` from the `/abstraction` barrel.
+
+---
+
+## v2.11.3
+
+_March 16, 2026_
+
+Multi-instance crypto isolation.
+
+- Per-`Demos`-instance `_cryptoInstanceId` (UUID) — fixes identity bleed across multiple `Demos` instances in the same process. Previously the encryption singleton could leak state between independently-constructed clients.
+- Additional small bugfixes around the encryption singleton.
+
+---
+
+## v2.11.2
+
+_March 4, 2026_
+
+Human Passport identity integration (PR #73). See [Human Passport identity](/sdk/web2/identities/human-passport).
+
+- `Identities.getHumanPassportScore(demos, address)`
+- `Identities.getHumanPassportIdentities(demos, demosAddress)`
+- `Identities.addHumanPassportIdentity(demos, payload)` — supports `api` and `onchain` verification methods. Default score threshold is 20. Throws if `verificationMethod === "onchain"` and `chainId == null`.
+- `Identities.removeHumanPassportIdentity(demos, address)`
+
+---
+
+## v2.11.1
+
+_March 3, 2026_
+
+Ethos identity integration (PR #74). See [Ethos identity](/sdk/web2/identities/ethos).
+
+- `Identities.getEthosScore(demos, walletAddress)`
+- `Identities.getEthosIdentities(demos, address?)`
+- `Identities.addEthosIdentity(demos, payload)` — EVM-only with payload validation.
+- `Identities.removeEthosIdentity(demos, payload)`
+
+---
+
+## v2.11.0
+
+_February 22, 2026_
+
+Foundational housekeeping release ahead of the identity wave (Ethos, Human Passport, L2PS messaging) that lands across v2.11.1–v2.11.5.
+
+- Initial token structure scaffolding.
+- Solana `contract_write` test cleanup.
+- Jest tsconfig fixes.
+
+---
+
+## v2.10.2
+
+_February 13, 2026_
+
+- Update `addWeb2IdentityViaTLSN` method (PR #77). Generic Web2 identity assignment via TLSNotary, exposed as `addWeb2IdentityViaTLSN(context, url, proof, demos)` and `removeWeb2IdentityViaTLSN(context, demos)`.
+
+---
+
+## v2.10.1
+
+_February 12, 2026_
+
+- `refactor`: change `node-forge` import from namespace to default to fix L2PS imports under stricter bundler resolution (PR #76).
+
+---
+
+## v2.10.0
+
+_February 10, 2026_
+
+Identity-via-TLSNotary suite (PR #75). Adds add/remove methods for several identity providers attested via TLSNotary proofs.
+
+- `addGithubIdentityViaTLSN` / `removeGithubIdentityViaTLSN`
+- `addDiscordIdentityViaTLSN` / `removeDiscordIdentityViaTLSN`
+- `addTelegramIdentityViaTLSN` / `removeTelegramIdentityViaTLSN`
+- Nomis identity helpers: `getNomisScore`, `addNomisIdentity`, `removeNomisIdentity`. See [Nomis identity](/sdk/web2/identities/nomis).
+- TRON multichain support (PR #56). See [TRON](/sdk/cross-chain/tron).
+
+---
+
 ## December 2024 Updates
 
 _December 2024_

@@ -1,0 +1,150 @@
+---
+title: "Network Forks"
+description: "Hard-fork machinery used to schedule and activate consensus-rule changes on the Demos Network at deterministic block heights."
+icon: "code-branch"
+---
+
+# Network Forks
+
+Demos uses a small, explicit hard-fork system to schedule consensus-rule changes at specific block heights. The same mechanism gates wire-format changes, state migrations, and any other rule that cannot vary across replicas without breaking consensus.
+
+The first production fork is **`osDenomination`**, which activates the [sub-DEM (OS) denomination](#fork-registry).
+
+## Design goals
+
+The fork machinery is intentionally minimal:
+
+- **Bit-identical to pre-fork code paths until activation.** A node booting without any forks scheduled is byte-for-byte equivalent to a pre-fork node. There is no implicit behavior change from upgrading the binary alone.
+- **Deterministic.** Activation is a function of block height, not wall-clock time, so all replicas activate at the same logical point.
+- **Forward-compatible by construction.** New forks are additive — adding one to the registry does not change the meaning of existing ones.
+- **Cheap to query.** Activation status is held in shared state and answered without a database round-trip.
+
+## Fork registry
+
+Known forks live in `src/forks/forkConfig.ts` as a typed registry:
+
+```typescript
+export type ForkName = "osDenomination"
+
+export interface ForkConfig {
+    activationHeight: number | null
+    description?: string
+}
+
+export const DEFAULT_FORK_CONFIG: Record<ForkName, ForkConfig> = {
+    osDenomination: {
+        activationHeight: null,
+        description:
+            "DEM→OS denomination change. amount field becomes OS string.",
+    },
+}
+```
+
+Adding a fork is a single line in this registry. Removing or renaming one is intentionally hard — the type union is a literal so typos surface at compile time rather than being silently treated as "unknown fork → inactive".
+
+| Field | Meaning |
+| ----- | ------- |
+| `activationHeight` | Block height at which the fork rules become active. `null` means **never active** (configured but unscheduled). |
+| `description` | Human-readable rationale, surfaced for operators and diagnostics. Not consumed by consensus. |
+
+## Activation height & genesis loading
+
+Activation heights are loaded from `data/genesis.json` at node startup and hydrated into `SharedState.forkConfig`. A fresh genesis without a `forks` section produces a registry where every fork has `activationHeight: null`, preserving pre-fork semantics.
+
+The loader lives in `src/forks/loadForkConfig.ts`. The runtime registry is a deep copy of `DEFAULT_FORK_CONFIG`, so per-instance mutation (e.g. genesis loading) does not leak into the module-level constant.
+
+## Gate function
+
+Every consensus-relevant code path that depends on a fork consults the gate function:
+
+```typescript
+import { isForkActive } from "@/forks/forkGates"
+
+if (isForkActive("osDenomination", blockHeight)) {
+    // post-fork logic
+} else {
+    // pre-fork logic
+}
+```
+
+A fork is active iff its `activationHeight` is non-null and the supplied `blockHeight >= activationHeight`. Defensive paths return `false` (inactive) when:
+
+- `forkConfig` is missing from `SharedState` (e.g. tests booting without full startup).
+- The fork name is unknown — compile-time typing should prevent this, but the runtime check protects against explicit casts.
+
+## Where the gate lives
+
+The current production gate is wired into:
+
+- **Transaction hashing** — the wire serializer routes through `serializerGate` so the digest matches the on-wire shape, pre or post-fork.
+- **Block hashing** — same gate, applied at the block level so consensus signatures cover the right format.
+- **Block insertion** — `chainBlocks.insertBlock` checks fork state before applying any post-fork validation rule (e.g. fork-specific state migrations).
+
+Any new fork that changes wire format or state must hook into these same gate points.
+
+## State migrations
+
+Forks that change persisted state (e.g. `osDenomination` re-denominating balances) ship as **idempotent migrations** under `src/forks/migrations/`. Each migration is recorded in the `fork_state` table so it runs **at most once** per chain. The recorded entry carries forensic data (pre/post sums, lost-value tally, applied-at block) for audit.
+
+The osDenomination migration is the canonical example:
+
+- Atomic: all three data sources (GCRv2 main balance, legacy GCR JSONB balance, validator stakes) migrate in one transaction or none.
+- Sum-invariant: `postSumOs == preSumDem * 10^9 - totalValueLostOs` is verified before commit.
+- Cap policy: legacy JSONB balances that would exceed `Number.MAX_SAFE_INTEGER * 0.9` after multiplication are capped, with the lost OS recorded for accounting.
+
+## RPC: `getNetworkInfo`
+
+The node exposes fork status via the `getNetworkInfo` RPC (`src/libs/network/handlers/forkHandlers.ts`). SDK clients use it to choose the correct wire format without an extra round-trip.
+
+**Request:** no arguments.
+
+**Response:**
+
+```json
+{
+  "forks": {
+    "osDenomination": {
+      "activationHeight": 12345,
+      "activated": false,
+      "currentHeight": 9876
+    }
+  }
+}
+```
+
+| Field | Meaning |
+| ----- | ------- |
+| `activationHeight` | The configured activation height, or `null` if the fork is unscheduled. |
+| `activated` | Whether the fork's rules are currently active — computed via the canonical `isForkActive` gate so it matches the serializer and validator code paths exactly. |
+| `currentHeight` | In-memory cache of the latest block height the node has processed (`SharedState.lastBlockNumber`). Lets clients do their own near-fork detection without a separate `getLastBlockNumber` call. |
+
+The response is wrapped in `forks.<name>` so that adding a future fork is a strictly additive change rather than a breaking one.
+
+The handler is intentionally cheap — it reads from in-memory shared state, not the database. Extra fields on the request payload are ignored, so forward-compatible client extensions don't choke the RPC.
+
+## Fork lifecycle phases
+
+The osDenomination rollout introduced a phased pattern that future forks can reuse:
+
+| Phase | Scope |
+| ----- | ----- |
+| **P2** | Add the fork to the registry with `activationHeight: null`. Wire gates into the serializer/validator paths. Bit-identical to pre-fork. |
+| **P3a** | Implement post-fork wire serializer and gate it on `isForkActive`. Still inactive at runtime. |
+| **P3b** | Implement state migration. Hooked into block insertion but does nothing while the fork is unscheduled. |
+| **P3c** | Add the `getNetworkInfo` RPC so SDK clients can detect activation. |
+| **P4 (SDK)** | Ship the post-fork SDK that consults `getNetworkInfo` and emits the new wire format. |
+| **Activation** | Deploy a genesis update that sets `activationHeight` to a real block. From that height onward, the gate flips to `true` and the new rules apply. |
+
+This phased rollout ensures that the network can carry the new code on every node before it ever changes behavior — there is no "big bang" deployment.
+
+## Operator notes
+
+- **Inspecting the active configuration** — the loaded registry is held in `SharedState.forkConfig`. Operators can confirm activation by calling `getNetworkInfo` against the local RPC.
+- **Replaying from genesis** — because activation height is genesis-defined, replaying a chain from genesis with a different `forks` section will produce a different chain.
+- **Adding a fork to a running network** — requires a coordinated genesis update across validators. The fork is not active for any node until its `activationHeight` block is processed; until then the gate falls through to legacy paths regardless of binary version.
+
+## Related documentation
+
+- [Amounts & Denominations (SDK)](/sdk/websdk/transactions/denominations) — how SDK clients consume `getNetworkInfo` and switch wire format.
+- [Network Governance](/backend/network-governance/overview) — for governable parameters that change without requiring a fork.
+- [Validator Lifecycle](/backend/validator-lifecycle/overview) — for state transitions that interact with denomination changes.

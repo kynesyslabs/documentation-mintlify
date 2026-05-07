@@ -108,6 +108,12 @@
                 ]
               },
               {
+                "group": "L2PS Privacy",
+                "pages": [
+                  "sdk/websdk/l2ps/overview"
+                ]
+              },
+              {
                 "group": "Instant Messaging",
                 "pages": [
                   "sdk/websdk/instant-messaging/overview",
@@ -328,6 +334,13 @@
               "backend/consensus-mechanism/comparative-advantage",
               "backend/consensus-mechanism/addressing-potential-criticisms",
               "backend/consensus-mechanism/conclusion"
+            ]
+          },
+          {
+            "group": "Network Forks",
+            "icon": "code-branch",
+            "pages": [
+              "backend/network-forks/overview"
             ]
           },
           {

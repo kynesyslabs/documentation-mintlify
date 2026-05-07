@@ -1,0 +1,125 @@
+---
+title: "L2PS SDK"
+description: "Encrypt and decrypt transactions for participation in a Layer 2 Privacy Subnet (L2PS). The SDK exposes a small singleton-registry API for managing per-subnet AES-GCM keys."
+icon: "shield-halved"
+---
+
+# L2PS SDK
+
+Layer 2 Privacy Subnets (L2PS) are encrypted execution lanes that ride on top of the main Demos Network. Transactions submitted to a subnet are encrypted with AES-GCM before they reach the mempool, batched, proven, and confirmed without revealing their contents to non-members.
+
+The architecture and lifecycle live in [L2PS Privacy Subnets](/backend/l2ps-subnet-framework/overview). This page documents the SDK surface used by clients to encrypt transactions for a subnet they belong to.
+
+The L2PS module is exported from `@kynesyslabs/demosdk/l2ps`.
+
+## Creating an L2PS instance
+
+`L2PS.create(privateKey?, iv?)` is the factory method. Each instance is a participant in one subnet, identified by the SHA-256 of its private key. Random keys are generated if you don't provide your own.
+
+```typescript
+import L2PS from "@kynesyslabs/demosdk/l2ps"
+
+// Create with freshly generated random keys
+const subnet = await L2PS.create()
+
+// Create with specific keys (use this when joining an existing subnet)
+const sharedSubnet = await L2PS.create(myPrivateKey, myIv)
+```
+
+| Parameter | Type | Required | Description |
+| --------- | ---- | -------- | ----------- |
+| `privateKey` | `string` | no | AES-256 private key. 32 random bytes are generated if omitted. |
+| `iv` | `string` | no | AES-GCM initialization vector. 12 random bytes are generated if omitted. |
+
+Members of the same subnet must share both the private key and the IV. Distribute these out-of-band — the SDK never transmits them.
+
+## Encrypting a transaction
+
+`encryptTx(tx, senderIdentity?)` takes an ordinary signed `Transaction` and wraps it in a new transaction of type `"l2psEncryptedTx"`. The original payload is serialized, encrypted with AES-GCM, base64-encoded, and stored alongside the auth tag and a hash of the original transaction for integrity verification.
+
+```typescript
+const tx = await demos.transfer(
+    "0x...",
+    denomination.demToOs("1.0"),
+)
+
+const encryptedTx = await subnet.encryptTx(tx)
+// encryptedTx.content.type === "l2psEncryptedTx"
+// encryptedTx can be confirmed/broadcast through the standard pipeline
+```
+
+The wrapped transaction carries an `L2PSEncryptedPayload`:
+
+```typescript
+interface L2PSEncryptedPayload {
+    l2ps_uid: string        // subnet UID (or instance ID if no config set)
+    encrypted_data: string  // base64 AES-GCM ciphertext
+    tag: string             // base64 AES-GCM auth tag
+    original_hash: string   // hash of the unwrapped transaction
+}
+```
+
+The optional `senderIdentity` parameter overrides the `from` field on the encrypted wrapper — useful when subnet members want to obscure the originating address from non-members.
+
+## Decrypting a transaction
+
+Subnet members verify and decrypt incoming traffic with `decryptTx`:
+
+```typescript
+const original = await subnet.decryptTx(encryptedTx)
+// original is the original Transaction
+```
+
+Decryption uses the same private key + IV as encryption. AES-GCM's authentication tag detects tampering — a modified payload throws rather than silently producing garbage.
+
+## Instance registry
+
+L2PS instances are registered in a static map keyed by their ID (SHA-256 of the private key). Useful when a process participates in multiple subnets:
+
+| Method | Returns | Purpose |
+| ------ | ------- | ------- |
+| `L2PS.getInstance(id)` | `L2PS \| undefined` | Look up an instance by ID. |
+| `L2PS.getInstances()` | `L2PS[]` | List all active instances. |
+| `L2PS.hasInstance(id)` | `boolean` | Existence check. |
+| `L2PS.removeInstance(id)` | `boolean` | Remove from the registry. Returns `true` if removed, `false` if not found. |
+
+```typescript
+const subnetId = await L2PS.create()
+const id = subnetId.id  // exposed for lookup
+
+const same = L2PS.getInstance(id)
+console.log(same === subnetId) // true
+
+const all = L2PS.getInstances()
+console.log("active subnets:", all.length)
+```
+
+## Configuration object
+
+You can attach an `L2PSConfig` to an instance to associate it with a subnet UID and known RPC endpoints:
+
+```typescript
+interface L2PSConfig {
+    uid: string
+    config: {
+        created_at_block: number
+        known_rpcs: string[]
+    }
+}
+
+subnet.config = {
+    uid: "testnet_l2ps_001",
+    config: {
+        created_at_block: 12345,
+        known_rpcs: ["https://l2ps-1.example.com"],
+    },
+}
+```
+
+When a config is set, `encryptTx` uses `config.uid` as the `l2ps_uid` on the encrypted payload. Otherwise the instance ID (SHA-256) is used.
+
+## Related documentation
+
+- [L2PS Privacy Subnets (Backend)](/backend/l2ps-subnet-framework/overview) — architecture, batch lifecycle, ZK-proof aggregation.
+- [How L2PS Transactions Are Handled](/backend/l2ps-subnet-framework/how-are-l2ps-transactions-handled) — node-side processing of `l2psEncryptedTx`.
+- [L2PS Quickstart](/backend/l2ps-subnet-framework/quickstart) — running an L2PS subnet end-to-end.
