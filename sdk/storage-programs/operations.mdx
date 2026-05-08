@@ -1,100 +1,231 @@
 ---
 title: "Operations"
-description: "This guide explains how each Storage Program operation fits into an end-to-end workflow. For method signatures, payload schemas, and error codes, rely..."
+description: "When to use each Storage Program operation, the pre-flight checks each one needs, and how it slots into the build / sign / confirm / broadcast flow."
 icon: "gears"
 ---
+
 # Storage Program Operations
 
-This guide explains how each Storage Program operation fits into an end-to-end workflow. For method signatures, payload schemas, and error codes, rely on the [API Reference](./api-reference). For concrete implementation patterns, see the [Storage Program Cookbook](../cookbook/storage-programs/examples).
+This guide explains **when** to reach for each Storage Program operation in an end-to-end workflow. The mechanics (build payload → sign → confirm → broadcast) are covered in [Getting Started](./getting-started); full method signatures, payload shapes, and response types live in the [API Reference](./api-reference). Recipe-style end-to-end examples live in the [Storage Program Cookbook](/sdk/cookbook/storage-programs/examples).
 
-## Operation Overview
+Every write below assumes the same skeleton:
 
-| Operation | Transaction? | Who Can Execute | Typical Use |
-|-----------|--------------|-----------------|-------------|
-| `create` | ✅ Yes | Any deployer | Provision a new storage namespace with optional data |
-| `write` | ✅ Yes | Deployer + allowed addresses | Merge updates into existing data |
-| `read` | ❌ No (RPC) | According to access mode | Fetch storage content or metadata |
-| `updateAccessControl` | ✅ Yes | Deployer only | Change access mode and/or allowlist |
-| `delete` | ✅ Yes | Deployer only | Remove a storage program and its data |
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { StorageProgram } from "@kynesyslabs/demosdk/storage"
 
-## Create
+const demos = new Demos()
+await demos.connect("https://node2.demos.sh")
+await demos.connectWallet(process.env.MNEMONIC!)
 
-**Goal**: Materialise a deterministic `stor-` address on-chain and (optionally) seed initial state.
+// 1. Build payload via a StorageProgram.* static helper
+// 2. const tx = await demos.storagePrograms.sign(payload)
+// 3. const validityData = await demos.confirm(tx)
+// 4. await demos.broadcast(validityData)   // or demos.broadcastAndWait
+```
 
-**Workflow**
-1. Derive the address client-side (reuse salts if you need different versions).
-2. Validate payload size (`<128KB`) and nesting before submitting a transaction.
-3. Submit `create` with the desired access mode and optional `allowedAddresses`.
-4. Wait for consensus confirmation if the caller depends on the program immediately.
+Reads bypass the transaction lifecycle entirely — they go through `demos.storagePrograms.read(address)`.
 
-**Pre-flight checks**
-- Restricted mode must include at least one allowlisted address.
-- Decide whether to encrypt sensitive fields up front; the network stores JSON as-is.
+## Operation overview
 
-**References**: [API Reference – create](./api-reference.md#sdk-methods), [Cookbook – provisioning flows](../cookbook/storage-programs/examples).
+| Operation | Transaction? | Who can run it | Typical use |
+| --- | --- | --- | --- |
+| `CREATE_STORAGE_PROGRAM` | Yes | Any funded address (becomes owner) | Provision a new `stor-` address and seed initial data |
+| `WRITE_STORAGE` | Yes | Owner, `allowed` addresses, group members with `write` | Replace the entire `data` field (full snapshots, binary blobs) |
+| `SET_FIELD` / `SET_ITEM` / `APPEND_ITEM` | Yes | Owner, `allowed`, group members with `write` | Surgical JSON updates without rewriting the document |
+| `DELETE_FIELD` / `DELETE_ITEM` | Yes | Owner, `allowed`, group members with `write` | Remove a single field or array element from a JSON program |
+| `READ_STORAGE` | No (RPC) | Determined by ACL mode + allowed/groups | Fetch program data via `demos.storagePrograms.read(address)` |
+| `UPDATE_ACCESS_CONTROL` | Yes | Owner only | Change ACL mode, allowlist, blacklist, or groups |
+| `DELETE_STORAGE_PROGRAM` | Yes | Owner, or group members with `delete` permission | Permanently remove the program and its data |
 
-## Write
+The string identifiers above are the values of the `StorageProgramOperation` enum exported from `@kynesyslabs/demosdk/storage`. You rarely write them by hand — the `StorageProgram.*` helpers fill them in.
 
-**Goal**: Merge new key/value pairs or nested data into the existing JSON document.
+## CREATE — provision a new program
 
-**Workflow**
-1. Fetch current state if you need to apply deltas (reads are free).
-2. Construct a payload that only includes the keys you intend to update.
-3. Submit a `write` transaction; consensus will merge it with the existing document.
-4. Optionally re-read to confirm the write and update caches or UI state.
+Use `StorageProgram.createStorageProgram` to mint a new deterministic `stor-` address and (optionally) seed initial data. The address is derived inside the helper from `sha256(deployer:programName:nonce:salt)`, so you don't need to call `deriveStorageAddress` yourself unless you want to know the address before signing.
 
-**Pre-flight checks**
-- Combined data size after merge must remain under 128KB.
-- Callers must satisfy access control (deployer or allowlisted address).
-- Consider optimistic UI updates paired with a rollback path for failures.
+```typescript
+const ownerAddress = demos.getAddress()
+const nonce = await demos.getAddressNonce(ownerAddress)
 
-**References**: [API Reference – write](./api-reference.md#sdk-methods), [Cookbook – update patterns](../cookbook/storage-programs/examples).
+const payload = StorageProgram.createStorageProgram(
+    ownerAddress,
+    "userProfile",
+    { displayName: "Alice", stats: { posts: 0 } },
+    "json",                  // encoding: "json" | "binary"
+    { mode: "public" },      // ACL: { mode, allowed?, blacklisted?, groups? }
+    { nonce, salt: "v1" },   // options.nonce is required
+)
 
-## Read
+const tx = await demos.storagePrograms.sign(payload)
+await demos.broadcast(await demos.confirm(tx))
+```
 
-**Goal**: Retrieve storage variables or metadata over RPC with no transaction cost.
+### Pre-flight checks
 
-**Workflow**
-1. Use `read(address)` for the full document or `read(address, key)` for scoped lookups.
-2. Cache aggressively—responses include `metadata.lastModified` so you can detect changes.
-3. Parallelise reads across addresses using `Promise.all` when fetching many programs.
+- **Nonce.** `options.nonce` is **required**. Fetch the sender's current nonce with `demos.getAddressNonce(ownerAddress)` — without it the helper throws `"nonce is required for storage program creation"`. The nonce is mixed into address derivation so two creates from the same deployer with the same `programName` produce different addresses.
+- **ACL choice.** Pick the mode you want now — you can change it later with `UPDATE_ACCESS_CONTROL`, but until you do, the default is `"owner"` (only the owner can read or write).
+- **Encoding.** `"json"` for structured `Record<string, any>`, `"binary"` for base64-encoded blobs. Granular operations (`setField`, `appendItem`, etc.) are **rejected** on `"binary"` programs.
+- **Size.** Validate against the 1 MB ceiling before signing:
+  ```typescript
+  if (!StorageProgram.validateSize(myData, "json")) {
+      throw new Error("Payload exceeds MAX_SIZE_BYTES (1 MB)")
+  }
+  if (!StorageProgram.validateNestingDepth(myData)) {
+      throw new Error("JSON nesting exceeds MAX_JSON_NESTING_DEPTH (64)")
+  }
+  ```
+- **Fee budget.** `StorageProgram.calculateStorageFee(data, encoding)` returns a `bigint` of the fee in **OS** (1 DEM = 10⁹ OS). Storage is billed at 1 DEM per 10 KB chunk, minimum 1 DEM.
+- **Predict the address up front (optional).**
+  ```typescript
+  const addr = StorageProgram.deriveStorageAddress(ownerAddress, "userProfile", nonce, "v1")
+  ```
 
-**Pre-flight checks**
-- Ensure the caller has read permission under the current access mode.
-- Treat responses as eventually consistent; pair with webhooks/polling if you need freshness.
+<Info>
+`storageLocation` defaults to `"onchain"`. The `"ipfs"` value is reserved for future hybrid storage and currently falls back to `"onchain"` on the node side — treat it as a forward-looking flag, not a working feature.
+</Info>
 
-**References**: [RPC Queries guide](./rpc-queries), [API Reference – read](./api-reference.md#sdk-methods).
+## WRITE — replace the full document
 
-## Update Access Control
+Use `StorageProgram.writeStorage` when you want to overwrite the entire `data` field in one shot. This is the right choice for:
 
-**Goal**: Switch access modes or adjust the allowlist for restricted programs.
+- **Binary programs.** Granular operations don't apply — every update is a full replacement.
+- **Full snapshots.** You're computing a new state from scratch (e.g. importing from another source) and don't need to reason about diffs.
+- **Atomic multi-field rewrites.** When you want every changed field to land in a single transaction even though there are no granular `WRITE_MANY` semantics.
 
-**Workflow**
-1. Read `metadata` to confirm deployer address and current configuration.
-2. Build the desired change:
-   - `accessControl: "private" | "public" | "restricted" | "deployer-only"`
-   - `allowedAddresses: string[]` (complete list, not patches)
-3. Submit the `updateAccessControl` transaction.
-4. Notify affected clients (e.g., flush caches, inform collaborators).
+```typescript
+const writePayload = StorageProgram.writeStorage(
+    storageAddress,
+    { displayName: "Alice", bio: "Web3 builder", stats: { posts: 1 } },
+    "json",
+)
+const tx = await demos.storagePrograms.sign(writePayload)
+await demos.broadcast(await demos.confirm(tx))
+```
 
-**Pre-flight checks**
-- Only the deployer may call this method.
-- Restricted mode requires a non-empty allowlist.
-- When opening data (restricted → public), review contents to avoid leaking secrets.
+`WRITE_STORAGE` replaces `data` wholesale — it does not deep-merge. If you only want to change a couple of keys in a large JSON document, prefer the granular operations below.
 
-**References**: [Access Control guide](./access-control), [API Reference – updateAccessControl](./api-reference.md#sdk-methods).
+## Granular operations — surgical JSON updates
 
-## Delete
+For JSON-encoded programs, five granular helpers let you change individual fields and array elements without rewriting (or paying to re-store) the whole document:
 
-**Goal**: Remove an entire Storage Program, including variables and metadata.
+| Helper | Operation | Use when |
+| --- | --- | --- |
+| `StorageProgram.setField(addr, field, value)` | `SET_FIELD` | Setting / replacing a single top-level field |
+| `StorageProgram.setItem(addr, field, index, value)` | `SET_ITEM` | Replacing one element of an array (negative indices supported, `-1` = last) |
+| `StorageProgram.appendItem(addr, field, value)` | `APPEND_ITEM` | Pushing onto an array field |
+| `StorageProgram.deleteField(addr, field)` | `DELETE_FIELD` | Removing a top-level field entirely |
+| `StorageProgram.deleteItem(addr, field, index)` | `DELETE_ITEM` | Removing one array element by index |
 
-**Workflow**
-1. Confirm that no downstream systems rely on the existing data (deletion is irreversible).
-2. Submit a `delete` transaction from the deployer address.
-3. Update any application indexes or caches that referenced the storage address.
+```typescript
+const a = StorageProgram.setField(storageAddress, "bio", "Updated bio")
+const b = StorageProgram.appendItem(storageAddress, "posts", { id: 7 })
+const c = StorageProgram.setItem(storageAddress, "posts", -1, { id: 8 })
+const d = StorageProgram.deleteField(storageAddress, "legacyConfig")
+const e = StorageProgram.deleteItem(storageAddress, "posts", 0)
 
-**Pre-flight checks**
-- Only the deployer can delete.
-- Communicate the removal to collaborators or users to prevent dangling references.
+// Each returns a StorageProgramPayload — same sign / confirm / broadcast flow.
+```
 
-**References**: [API Reference – delete](./api-reference.md#sdk-methods), [Cookbook – teardown routines](../cookbook/storage-programs/examples).
+**When to prefer granular ops over `writeStorage`:**
+
+- You're editing a small slice of a large document — fee is computed on the operation payload, not the whole stored document.
+- You want concurrent writers each touching different fields without overwriting each other's changes.
+- You want the transaction to fail loudly if the field doesn't have the shape you expect (e.g. `setItem` on a non-array).
+
+**When to fall back to `writeStorage`:**
+
+- The program is `"binary"` — granular operations are rejected for binary encoding.
+- You're rewriting most of the document anyway.
+- You need cross-field invariants (multiple fields must change atomically as one logical unit; granular ops are one-op-per-tx).
+
+## READ — fetch program data over RPC
+
+Reads do **not** go through the transaction lifecycle. Use the RPC accessor directly:
+
+```typescript
+const result = await demos.storagePrograms.read(storageAddress)
+
+if (result.success) {
+    console.log(result.data)         // the stored JSON object or base64 string
+    console.log(result.metadata)     // optional metadata
+    console.log(result.sizeBytes)
+} else {
+    console.error(result.error, result.errorCode)
+}
+```
+
+The response shape is `StorageProgramResponse` from `@kynesyslabs/demosdk/storage`. If the wallet is connected, the SDK automatically attaches an `identity`/`signature` header so the node can apply ACL rules to the requester.
+
+`StorageProgram.readStorage(address)` exists as a payload builder, but it's intended for transaction-validation flows — for normal reads use `demos.storagePrograms.read(address)`.
+
+For listings, by-owner queries, name search, and field-level lookups (`getFields`, `getValue`, `getItem`, `hasField`, `getFieldType`, `getAll`) see [RPC Queries](./rpc-queries).
+
+## UPDATE ACCESS CONTROL — owner-only ACL changes
+
+Only the program owner can change the ACL. Submit a full ACL object — it replaces the existing one rather than merging.
+
+```typescript
+const aclPayload = StorageProgram.updateAccessControl(
+    storageAddress,
+    {
+        mode: "restricted",
+        allowed: ["demos1user1...", "demos1user2..."],
+        blacklisted: ["demos1spam..."],
+        groups: {
+            editors: { members: ["demos1ed1..."], permissions: ["read", "write"] },
+            viewers: { members: ["demos1view..."], permissions: ["read"] },
+        },
+    },
+)
+const tx = await demos.storagePrograms.sign(aclPayload)
+await demos.broadcast(await demos.confirm(tx))
+```
+
+### Pre-flight checks
+
+- **Owner-only.** Anyone else gets denied at the ACL check before the transaction lands. There is no "deputy" or co-owner concept.
+- **Mode is required.** Valid values are `"owner"` (default — only the owner can read or write), `"public"` (anyone reads, only the owner / allowed / writers in groups can write), and `"restricted"` (only `allowed` and matching group members get any access).
+- **Blacklist beats allowlist.** An address that appears in both `blacklisted` and `allowed` (or in a group) is denied. Use this to revoke without rebuilding the allow set.
+- **Opening up data.** Going from `"owner"` or `"restricted"` to `"public"` exposes everything currently stored — audit the data first if there's any chance of secrets.
+
+The convenience helpers `StorageProgram.publicACL()`, `privateACL()`, `restrictedACL(allowed)`, `groupACL(groups)`, and `blacklistACL(mode, blacklisted, allowed?)` all return ready-made `StorageProgramACL` objects. Full coverage in [Access Control](./access-control).
+
+<Note>
+The legacy `accessControl: "private" | "public" | "restricted" | "deployer-only"` field on the payload (and the `createStorageProgramLegacy` / `updateAccessControlLegacy` helpers) is kept for backward compatibility but is **deprecated**. Use the `acl` object with `mode` for all new code.
+</Note>
+
+## DELETE — irreversible teardown
+
+```typescript
+const delPayload = StorageProgram.deleteStorageProgram(storageAddress)
+const tx = await demos.storagePrograms.sign(delPayload)
+await demos.broadcast(await demos.confirm(tx))
+```
+
+### Pre-flight checks
+
+- **Permission.** The owner can always delete. Other addresses can delete **only** if they are members of an ACL group with the `"delete"` permission.
+- **Irreversible.** There is no undo, no soft delete, no archival snapshot. The address itself remains derivable from `(deployer, programName, nonce, salt)`, but the data is gone.
+- **Downstream cleanup.** Invalidate caches, notify collaborators, and remove references from indexes before submitting the delete — by the time the transaction lands the data is unrecoverable.
+
+## Resource limits at a glance
+
+| Limit | Value | Constant on `STORAGE_PROGRAM_CONSTANTS` |
+| --- | --- | --- |
+| Max payload size | 1 MB (1,048,576 bytes) | `MAX_SIZE_BYTES` |
+| Max JSON nesting depth | 64 | `MAX_JSON_NESTING_DEPTH` |
+| Pricing chunk size | 10 KB (10,240 bytes) | `PRICING_CHUNK_BYTES` |
+| Fee per chunk | 1 DEM (= 10⁹ OS) | `FEE_PER_CHUNK` |
+
+```typescript
+import { STORAGE_PROGRAM_CONSTANTS } from "@kynesyslabs/demosdk/storage"
+```
+
+## Cross-references
+
+- [Getting Started](./getting-started) — the four-step build / sign / confirm / broadcast flow with a worked example.
+- [Access Control](./access-control) — `owner` / `public` / `restricted` modes, allowlists, blacklists, and group permissions.
+- [RPC Queries](./rpc-queries) — listings, by-owner lookups, name search, and granular field-level reads via `StorageProgram.getFields`, `getValue`, `getItem`, `hasField`, `getFieldType`, and `getAll`.
+- [API Reference](./api-reference) — every `StorageProgram` static method, the full `StorageProgramPayload` schema, ACL types, and the `StorageProgramResponse` shape.
+- [Cookbook — Storage Programs](/sdk/cookbook/storage-programs/examples) — end-to-end recipes for public profiles, team workspaces, and binary attachments.

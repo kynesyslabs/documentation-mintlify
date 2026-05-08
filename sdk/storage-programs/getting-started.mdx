@@ -1,399 +1,209 @@
 ---
 title: "Getting Started"
-description: "This guide will walk you through creating your first Storage Program on Demos Network."
+description: "Create, write to, and read from your first Storage Program against the v3.1.0 SDK."
 icon: "rocket"
 ---
 # Getting Started with Storage Programs
 
-This guide will walk you through creating your first Storage Program on Demos Network.
+This guide walks you through creating a Storage Program, writing data to it, and reading it back over RPC.
 
 ## Prerequisites
 
-- Bun (latest) installed
-- Demos Network SDK: `@kynesyslabs/demosdk`
-- A Demos wallet with some balance for transaction fees
-- Connection to a Demos Network RPC node
+- [Bun](https://bun.sh) (latest) installed
+- The Demos SDK: `bun add @kynesyslabs/demosdk@latest`
+- A Demos wallet with enough balance to cover storage fees ([1 DEM per 10 KB chunk](#fees), minimum 1 DEM)
+- Access to a Demos Network RPC node
 
-## Installation
+## The mental model
 
-```bash
-bun add --latest @kynesyslabs/demosdk
-```
+Every Storage Program operation follows the same four-step shape:
 
-## Your First Storage Program
+1. **Build a typed payload** with one of the `StorageProgram.*` static helpers (`createStorageProgram`, `writeStorage`, `updateAccessControl`, `deleteStorageProgram`, plus the granular `setField` / `setItem` / `appendItem` / `deleteField` / `deleteItem`).
+2. **Sign** it with `demos.storagePrograms.sign(payload)` — this returns a signed `Transaction`.
+3. **Confirm** gas with `demos.confirm(tx)`.
+4. **Broadcast** with `demos.broadcast(validityData)` (or `demos.broadcastAndWait` for deterministic inclusion).
 
-### Step 1: Initialize the SDK
+Reads are different — they go through `demos.storagePrograms.read(address)` directly, no transaction required.
 
-```typescript
-import { DemosClient } from '@kynesyslabs/demosdk'
-import { deriveStorageAddress } from '@kynesyslabs/demosdk/storage'
-
-// Connect to Demos Network
-const demos = new DemosClient({
-  rpcUrl: 'https://rpc.demos.network',
-  privateKey: 'your-private-key-here' // Use environment variables in production
-})
-
-// Get your wallet address
-const myAddress = await demos.getAddress()
-console.log('My address:', myAddress)
-```
-
-### Step 2: Generate Storage Address
-
-Before creating a Storage Program, you can calculate its address client-side:
+## Step 1: Connect
 
 ```typescript
-// Generate deterministic address
-const programName = "myFirstProgram"
-const salt = "" // Optional: use different salt for multiple programs with same name
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { StorageProgram } from "@kynesyslabs/demosdk/storage"
 
-const storageAddress = deriveStorageAddress(
-  myAddress,
-  programName,
-  salt
-)
+const demos = new Demos()
+await demos.connect("https://node2.demos.sh")
+await demos.connectWallet(process.env.MNEMONIC!)
 
-console.log('Storage address:', storageAddress)
-// Output: stor-a1b2c3d4e5f6789012345678901234567890abcd...
+const ownerAddress = demos.getAddress()  // sync, returns string
 ```
 
-**Address Format**: `stor-` + 40 hex characters (SHA256 hash)
+<Info>
+`demos.getAddress()` is synchronous and returns the connected wallet's address as a string. It does not return a Promise.
+</Info>
 
-### Step 3: Create Your Storage Program
+## Step 2: Build the create payload
 
-Let's create a simple user profile storage:
-
-```typescript
-import { StorageProgram } from '@kynesyslabs/demosdk/storage'
-
-// Create storage program with initial data
-const result = await demos.storageProgram.create(
-  programName,
-  "private", // Access control: private, public, restricted, deployer-only
-  {
-    initialData: {
-      username: "alice",
-      email: "alice@example.com",
-      preferences: {
-        theme: "dark",
-        notifications: true
-      },
-      createdAt: Date.now()
-    }
-  }
-)
-
-console.log('Transaction hash:', result.txHash)
-console.log('Storage address:', result.storageAddress)
-```
-
-**Access Control Modes**:
-- `private`: Only you can read and write
-- `public`: Anyone can read, only you can write
-- `restricted`: Only you and whitelisted addresses can access
-- `deployer-only`: Explicit deployer-only mode (same as private)
-
-### Step 4: Write Data to Storage
-
-Add or update data in your Storage Program:
+`StorageProgram.createStorageProgram(deployer, programName, data, encoding, acl?, options)` builds the payload for the create transaction. The deterministic storage address is derived inside the helper — you don't compute it separately.
 
 ```typescript
-// Write/update data (merges with existing data)
-const writeResult = await demos.storageProgram.write(
-  storageAddress,
-  {
-    bio: "Web3 developer and blockchain enthusiast",
-    socialLinks: {
-      twitter: "@alice_demos",
-      github: "alice"
-    },
-    lastUpdated: Date.now()
-  }
-)
+const nonce = await demos.getAddressNonce(ownerAddress)
 
-console.log('Data written:', writeResult.txHash)
-```
-
-**Important**: Write operations **merge** with existing data. They don't replace the entire storage.
-
-### Step 5: Read Data via RPC
-
-Reading data is **free** and doesn't require a transaction:
-
-```typescript
-// Read all data
-const allData = await demos.storageProgram.read(storageAddress)
-console.log('All data:', allData.data.variables)
-
-// Read specific key
-const username = await demos.storageProgram.read(storageAddress, 'username')
-console.log('Username:', username)
-```
-
-Need more detail on pagination, caching, or response formats? The [RPC Queries guide](./rpc-queries) covers the full schema and performance advice.
-
-## Complete Example
-
-Here's a complete working example:
-
-```typescript
-import { DemosClient } from '@kynesyslabs/demosdk'
-import { deriveStorageAddress } from '@kynesyslabs/demosdk/storage'
-
-async function main() {
-  // 1. Initialize SDK
-  const demos = new DemosClient({
-    rpcUrl: 'https://rpc.demos.network',
-    privateKey: process.env.PRIVATE_KEY
-  })
-
-  const myAddress = await demos.getAddress()
-  console.log('Connected as:', myAddress)
-
-  // 2. Generate storage address
-  const programName = "userProfile"
-  const storageAddress = deriveStorageAddress(myAddress, programName)
-  console.log('Storage address:', storageAddress)
-
-  // 3. Create storage program
-  console.log('Creating storage program...')
-  const createResult = await demos.storageProgram.create(
-    programName,
-    "private",
+const payload = StorageProgram.createStorageProgram(
+    ownerAddress,
+    "userProfile",
     {
-      initialData: {
         displayName: "Alice",
         joinedAt: Date.now(),
-        stats: {
-          posts: 0,
-          followers: 0
-        }
-      }
-    }
-  )
-  console.log('Created! TX:', createResult.txHash)
+        stats: { posts: 0, followers: 0 },
+    },
+    "json",
+    { mode: "public" },        // anyone reads, only owner writes
+    { nonce, salt: "v1" },     // nonce is required; salt is optional
+)
 
-  // 4. Wait for transaction confirmation (optional but recommended)
-  await demos.waitForTransaction(createResult.txHash)
-  console.log('Transaction confirmed')
+console.log("storageAddress:", payload.storageAddress)
+// stor-{40 hex chars} — derived from sha256(deployer:programName:nonce:salt)
+```
 
-  // 5. Read the data back
-  const data = await demos.storageProgram.read(storageAddress)
-  console.log('Data retrieved:', data.data.variables)
-  console.log('Metadata:', data.data.metadata)
+<Warning>
+`options.nonce` is required. It is the sender's current account nonce, fetched via `demos.getAddressNonce(ownerAddress)`. Without it the helper throws `"nonce is required for storage program creation"`. The nonce is mixed into the address derivation so each create from the same deployer produces a unique address even when `programName` collides.
+</Warning>
 
-  // 6. Update some data
-  console.log('Updating stats...')
-  const updateResult = await demos.storageProgram.write(
-    storageAddress,
+## Step 3: Sign, confirm, broadcast
+
+```typescript
+const tx = await demos.storagePrograms.sign(payload)
+const validityData = await demos.confirm(tx)
+
+// Option A — fire-and-forget; returns when the node accepts the tx.
+const res = await demos.broadcast(validityData)
+
+// Option B — wait for inclusion in a block.
+const { broadcast, status } = await demos.broadcastAndWait(validityData)
+if (status.state !== "included") {
+    throw new Error(`Storage program not included; ended at ${status.state}`)
+}
+```
+
+See [Broadcasting a Transaction](/sdk/websdk/transactions/broadcasting-a-transaction) for the difference between `broadcast` and `broadcastAndWait` and the error types each can throw.
+
+## Step 4: Write data
+
+`writeStorage` replaces the entire `data` field of the program. For surgical updates use the [granular operations](#granular-updates) below.
+
+```typescript
+const writePayload = StorageProgram.writeStorage(
+    payload.storageAddress,
     {
-      stats: {
-        posts: 5,
-        followers: 42
-      },
-      lastActive: Date.now()
-    }
-  )
-  console.log('Updated! TX:', updateResult.txHash)
+        displayName: "Alice",
+        bio: "Web3 builder",
+        stats: { posts: 1, followers: 5 },
+    },
+    "json",
+)
 
-  // 7. Read specific field
-  const stats = await demos.storageProgram.read(storageAddress, 'stats')
-  console.log('Stats:', stats)
-}
-
-main().catch(console.error)
+const writeTx = await demos.storagePrograms.sign(writePayload)
+await demos.broadcast(await demos.confirm(writeTx))
 ```
 
-## Where to Go Next
+## Step 5: Read data
 
-- Master permissions in the [Access Control guide](./access-control).
-- Dive deeper into each operation in the [Operations guide](./operations).
-- Explore practical recipes in the [Storage Program Cookbook](../cookbook/storage-programs/examples).
+Reads are served directly over RPC — no transaction, no fee.
 
-## Troubleshooting
-
-### Error: "Data size exceeds limit"
-
-**Problem**: Your data exceeds the 128KB limit.
-
-**Solution**:
 ```typescript
-// Check data size before storing
-import { getDataSize } from '@kynesyslabs/demosdk/storage'
+const result = await demos.storagePrograms.read(payload.storageAddress)
 
-const data = { /* your data */ }
-const size = getDataSize(data)
-console.log(`Data size: ${size} bytes (limit: ${128 * 1024})`)
-
-if (size > 128 * 1024) {
-  console.error('Data too large! Consider splitting or compressing.')
+if (result.success) {
+    console.log("data:", result.data)         // your stored payload
+    console.log("metadata:", result.metadata) // optional metadata
+    console.log("size:", result.sizeBytes)
+} else {
+    console.error(result.error, result.errorCode)
 }
 ```
 
-### Error: "Access denied"
+The full response shape is `StorageProgramResponse` from `@kynesyslabs/demosdk/storage`. Notable fields: `owner`, `programName`, `encoding`, `data`, `metadata`, `storageLocation`, `sizeBytes`, `createdAt`, `updatedAt`. See [RPC Queries](./rpc-queries) for queries beyond the address-based lookup.
 
-**Problem**: Trying to write to storage you don't have access to.
+## Granular updates
 
-**Solution**: Check the access control mode and your permissions:
+For JSON-encoded programs, you can change individual fields and array elements without rewriting the whole document:
+
 ```typescript
-const data = await demos.storageProgram.read(storageAddress)
-const metadata = data.data.metadata
+// Set a single field
+const a = StorageProgram.setField(payload.storageAddress, "bio", "Updated bio")
 
-console.log('Access control:', metadata.accessControl)
-console.log('Deployer:', metadata.deployer)
-console.log('Allowed addresses:', metadata.allowedAddresses)
+// Append to an array
+const b = StorageProgram.appendItem(payload.storageAddress, "posts", { id: 7 })
+
+// Replace an array element (negative indices supported, -1 = last)
+const c = StorageProgram.setItem(payload.storageAddress, "posts", 0, { id: 8 })
+
+// Delete a field
+const d = StorageProgram.deleteField(payload.storageAddress, "legacyConfig")
+
+// Delete an array element by index
+const e = StorageProgram.deleteItem(payload.storageAddress, "posts", -1)
 ```
 
-### Error: "Storage program not found"
+Each returns a `StorageProgramPayload` you sign + confirm + broadcast like any other write. Granular operations are JSON-only — they are rejected for binary-encoded programs.
 
-**Problem**: Trying to read a Storage Program that doesn't exist yet.
+## Updating access control and deleting
 
-**Solution**: Verify the address and ensure the creation transaction was confirmed:
 ```typescript
-// Check if storage program exists
-try {
-  const data = await demos.storageProgram.read(storageAddress)
-  console.log('Storage program exists')
-} catch (error) {
-  console.log('Storage program not found or not yet confirmed')
+// Tighten access to the owner only
+const aclPayload = StorageProgram.updateAccessControl(
+    payload.storageAddress,
+    { mode: "owner" },
+)
+
+// Remove the program permanently (owner / ACL-permissioned only)
+const delPayload = StorageProgram.deleteStorageProgram(payload.storageAddress)
+```
+
+Both return payloads that follow the same sign / confirm / broadcast flow.
+
+## Fees
+
+Storage Programs are billed at **1 DEM per 10 KB chunk**, minimum 1 DEM per write. Calculate the fee for a payload before sending it:
+
+```typescript
+import { denomination } from "@kynesyslabs/demosdk"
+
+const feeOs = StorageProgram.calculateStorageFee(
+    { displayName: "Alice", stats: { posts: 0 } },
+    "json",
+)
+console.log(`fee: ${denomination.osToDem(feeOs)} DEM`)
+```
+
+The fee is returned as a `bigint` in OS (1 DEM = 10⁹ OS). See [Amounts & Denominations](/sdk/websdk/transactions/denominations) for the conversion helpers.
+
+## Resource limits
+
+| Limit | Value | Constant |
+| --- | --- | --- |
+| Max payload size | 1 MB (1,048,576 bytes) | `STORAGE_PROGRAM_CONSTANTS.MAX_SIZE_BYTES` |
+| Max JSON nesting depth | 64 | `STORAGE_PROGRAM_CONSTANTS.MAX_JSON_NESTING_DEPTH` |
+| Pricing chunk | 10 KB (10,240 bytes) | `STORAGE_PROGRAM_CONSTANTS.PRICING_CHUNK_BYTES` |
+| Fee per chunk | 1 DEM (= 10⁹ OS) | `STORAGE_PROGRAM_CONSTANTS.FEE_PER_CHUNK` |
+
+```typescript
+import { STORAGE_PROGRAM_CONSTANTS } from "@kynesyslabs/demosdk/storage"
+
+if (!StorageProgram.validateSize(myData, "json")) {
+    throw new Error(`Payload exceeds ${STORAGE_PROGRAM_CONSTANTS.MAX_SIZE_BYTES} bytes`)
+}
+
+if (!StorageProgram.validateNestingDepth(myData)) {
+    throw new Error("JSON nesting too deep (>64 levels)")
 }
 ```
 
-### Error: "Nesting depth exceeds limit"
+## Where to go next
 
-**Problem**: Your object structure is too deeply nested (>64 levels).
-
-**Solution**: Flatten your data structure:
-```typescript
-// ❌ BAD: Too deeply nested
-const badData = { level1: { level2: { level3: { /* ... 64+ levels */ } } } }
-
-// ✅ GOOD: Flattened structure
-const goodData = {
-  "user.profile.name": "Alice",
-  "user.profile.email": "alice@example.com",
-  "user.settings.theme": "dark"
-}
-```
-
-## Best Practices
-
-### 1. Use Environment Variables
-
-```typescript
-// ✅ GOOD
-const demos = new DemosClient({
-  rpcUrl: process.env.DEMOS_RPC_URL,
-  privateKey: process.env.PRIVATE_KEY
-})
-
-// ❌ BAD
-const demos = new DemosClient({
-  privateKey: 'hardcoded-private-key' // NEVER DO THIS
-})
-```
-
-### 2. Wait for Transaction Confirmation
-
-```typescript
-// ✅ GOOD
-const result = await demos.storageProgram.create(...)
-await demos.waitForTransaction(result.txHash)
-const data = await demos.storageProgram.read(storageAddress)
-
-// ❌ BAD
-const result = await demos.storageProgram.create(...)
-const data = await demos.storageProgram.read(storageAddress) // Might fail, tx not confirmed yet
-```
-
-### 3. Check Data Size Before Writing
-
-```typescript
-// ✅ GOOD
-import { getDataSize } from '@kynesyslabs/demosdk/storage'
-
-const size = getDataSize(myData)
-if (size > 128 * 1024) {
-  throw new Error('Data too large')
-}
-await demos.storageProgram.write(storageAddress, myData)
-```
-
-### 4. Use Descriptive Program Names
-
-```typescript
-// ✅ GOOD
-const storageAddress = deriveStorageAddress(myAddress, "userProfile", "v1")
-
-// ❌ BAD
-const storageAddress = deriveStorageAddress(myAddress, "data", "")
-```
-
-### 5. Structure Data Logically
-
-```typescript
-// ✅ GOOD: Organized structure
-const userData = {
-  profile: { name: "Alice", bio: "..." },
-  settings: { theme: "dark", notifications: true },
-  stats: { posts: 5, followers: 42 }
-}
-
-// ❌ BAD: Flat and unorganized
-const userData = {
-  name: "Alice",
-  bio: "...",
-  theme: "dark",
-  notifications: true,
-  posts: 5,
-  followers: 42
-}
-```
-
-## Next Steps
-
-Now that you've created your first Storage Program, explore:
-
-- [Operations Guide](./operations) - Learn all CRUD operations in detail
-- [Access Control](./access-control) - Master permission systems
-- [RPC Queries](./rpc-queries) - Efficient data reading patterns
-- [Examples](../cookbook/storage-programs/examples) - Practical real-world examples
-- [API Reference](./api-reference) - Complete API documentation
-
-## Quick Reference
-
-### SDK Methods
-
-```typescript
-// Create storage program
-await demos.storageProgram.create(programName, accessControl, options)
-
-// Write data
-await demos.storageProgram.write(storageAddress, data)
-
-// Read data
-await demos.storageProgram.read(storageAddress, key?)
-
-// Update access control
-await demos.storageProgram.updateAccessControl(storageAddress, updates)
-
-// Delete storage program
-await demos.storageProgram.delete(storageAddress)
-
-// Generate address
-deriveStorageAddress(deployerAddress, programName, salt?)
-```
-
-### Storage Limits
-
-- **Max size**: 128KB per program
-- **Max nesting**: 64 levels
-- **Max key length**: 256 characters
-
-### Access Control Modes
-
-- `private` - Deployer only (read & write)
-- `public` - Anyone reads, deployer writes
-- `restricted` - Deployer + whitelist
-- `deployer-only` - Same as private
+- [Operations](./operations) — when to use create vs. write vs. granular ops, and the full lifecycle.
+- [Access Control](./access-control) — `owner` / `public` / `restricted` modes, allowlists, blacklists, and group permissions.
+- [RPC Queries](./rpc-queries) — full read-side surface, including the node-level RPC endpoints for listing, searching, and field-level lookups.
+- [API Reference](./api-reference) — every `StorageProgram` static helper, payload shape, and response interface.
+- [Cookbook](/sdk/cookbook/storage-programs/examples) — end-to-end recipes (public profile, team workspace, binary attachments).

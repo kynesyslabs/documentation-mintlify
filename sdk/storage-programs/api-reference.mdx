@@ -1,893 +1,928 @@
 ---
 title: "Api Reference"
-description: "Complete API reference for Storage Programs on Demos Network."
+description: "Method-signature reference for the v3.1.0 Storage Programs SDK: every Demos accessor, StorageProgram static helper, payload type, and constant."
 icon: "book"
 ---
+
 # Storage Programs API Reference
 
-Complete API reference for Storage Programs on Demos Network.
+This page is the deep-link reference for the Storage Programs surface of `@kynesyslabs/demosdk@v3.1.0`. Every signature, return type, and parameter shape on this page is lifted directly from the SDK source. For the narrative walkthrough, start at [Getting Started](./getting-started).
 
-## Table of Contents
+The Storage Programs surface lives in two modules:
 
-1. [SDK Methods](#sdk-methods)
-2. [RPC Endpoints](#rpc-endpoints)
-3. [Transaction Payloads](#transaction-payloads)
-4. [Response Formats](#response-formats)
-5. [Constants and Limits](#constants-and-limits)
-6. [Types and Interfaces](#types-and-interfaces)
-7. [Error Codes](#error-codes)
+- `@kynesyslabs/demosdk/websdk` — the `Demos` class with the `storagePrograms` accessor (signing + reading).
+- `@kynesyslabs/demosdk/storage` — the `StorageProgram` class (payload builders, validators, ACL helpers), all type aliases, the `STORAGE_PROGRAM_CONSTANTS` object, and the type guards.
 
-## SDK Methods
+## Imports
 
-### DemosClient.storageProgram
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk"
 
-The `storageProgram` namespace provides all Storage Program operations.
+import {
+    StorageProgram,
+    STORAGE_PROGRAM_CONSTANTS,
+    isStorageProgramPayload,
+    isValidEncoding,
+    isValidStorageLocation,
+} from "@kynesyslabs/demosdk/storage"
 
----
+import type {
+    StorageProgramData,
+    StorageProgramListItem,
+    StorageProgramOperation,
+    StorageEncoding,
+    StorageLocation,
+    StorageACLMode,
+    StorageGroupPermissions,
+    StorageProgramACL,
+    StorageProgramPayload,
+    StorageProgramTransactionContent,
+    StorageProgramTransaction,
+} from "@kynesyslabs/demosdk/storage"
+```
 
-### create()
+<Warning>
+There is no `DemosClient` and no `demos.storageProgram` (singular). The class is `Demos` and the accessor is `demos.storagePrograms` (plural). The static helpers on `StorageProgram` (e.g. `deriveStorageAddress`, `getDataSize`) are **not** exported as standalone functions — call them on the class.
+</Warning>
 
-Create a new Storage Program.
+## `Demos` storage accessor
+
+The `storagePrograms` property on a connected `Demos` instance exposes two methods:
+
+### `demos.storagePrograms.sign`
+
+Signs a Storage Program payload as a transaction. The returned `Transaction` is ready for `demos.confirm` followed by `demos.broadcast` (or `demos.broadcastAndWait`).
 
 #### Signature
 
 ```typescript
-async create(
-  programName: string,
-  accessControl: "private" | "public" | "restricted" | "deployer-only",
-  options?: {
-    initialData?: Record<string, any>
-    allowedAddresses?: string[]
-    salt?: string
-  }
-): Promise<StorageProgramCreateResult>
+storagePrograms.sign(
+    payload: StorageProgramPayload,
+): Promise<Transaction>
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `programName` | `string` | ✅ | Unique name for the storage program |
-| `accessControl` | `AccessControlMode` | ✅ | Access control mode |
-| `options.initialData` | `Record<string, any>` | ❌ | Initial data to store |
-| `options.allowedAddresses` | `string[]` | ❌ | Whitelist for restricted mode |
-| `options.salt` | `string` | ❌ | Salt for address derivation (default: "") |
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `payload` | `StorageProgramPayload` | A payload produced by one of the `StorageProgram.*` builders. Must include `storageAddress`. |
 
 #### Returns
 
-```typescript
-{
-  success: boolean
-  txHash: string
-  storageAddress: string
-  message?: string
-}
-```
-
-#### Example
-
-```typescript
-const result = await demos.storageProgram.create(
-  "userProfile",
-  "private",
-  {
-    initialData: {
-      username: "alice",
-      email: "alice@example.com"
-    }
-  }
-)
-
-console.log('Storage address:', result.storageAddress)
-console.log('Transaction:', result.txHash)
-```
-
-#### Errors
-
-- **400**: Invalid access control mode
-- **400**: Data size exceeds 128KB limit
-- **400**: Nesting depth exceeds 64 levels
-- **400**: Key length exceeds 256 characters
-- **400**: Restricted mode without allowedAddresses
-
----
-
-### write()
-
-Write or update data in a Storage Program.
-
-#### Signature
-
-```typescript
-async write(
-  storageAddress: string,
-  data: Record<string, any>
-): Promise<StorageProgramWriteResult>
-```
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `storageAddress` | `string` | ✅ | Storage Program address (stor-...) |
-| `data` | `Record<string, any>` | ✅ | Data to write/merge |
-
-#### Returns
-
-```typescript
-{
-  success: boolean
-  txHash: string
-  message?: string
-}
-```
+`Promise<Transaction>` — a fully signed transaction with `content.type = "storageProgram"` and `content.data = ["storageProgram", payload]`.
 
 #### Behavior
 
-- **Merges** with existing data (does not replace)
-- Updates `lastModified` timestamp
-- Recalculates `size` metadata
+- Throws `"Wallet not connected"` if no keypair is attached to the `Demos` instance.
+- Throws `"Storage address Not found in payload"` if `payload.storageAddress` is missing.
+- Sets `tx.content.to` to `payload.storageAddress` before signing.
 
 #### Example
 
 ```typescript
-await demos.storageProgram.write(
-  "stor-abc123...",
-  {
-    bio: "Web3 developer",
-    lastUpdated: Date.now()
-  }
+const payload = StorageProgram.createStorageProgram(
+    demos.getAddress(),
+    "appConfig",
+    { version: "1.0" },
+    "json",
+    { mode: "public" },
+    { nonce: await demos.getAddressNonce(demos.getAddress()) },
 )
+
+const tx = await demos.storagePrograms.sign(payload)
+const validity = await demos.confirm(tx)
+await demos.broadcast(validity)
 ```
 
-#### Errors
+### `demos.storagePrograms.read`
 
-- **403**: Access denied (not deployer or allowed)
-- **400**: Combined size exceeds 128KB limit
-- **404**: Storage program not found
-
----
-
-### read()
-
-Read data from a Storage Program (RPC query, no transaction).
+Fetches a Storage Program by address over HTTP. Issues `GET <rpc_url>/storage-program/<address>`. If a wallet is connected, the request is annotated with `identity` and `signature` headers (ed25519 signature over the connected address) so ACL-protected programs can resolve permissions.
 
 #### Signature
 
 ```typescript
-async read(
-  storageAddress: string,
-  key?: string
-): Promise<StorageProgramReadResult>
+storagePrograms.read(
+    address: string,
+): Promise<StorageProgramResponse>
 ```
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `storageAddress` | `string` | ✅ | Storage Program address |
-| `key` | `string` | ❌ | Specific key to read (optional) |
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `address` | `string` | The storage program address (`stor-{40 hex chars}`). |
 
 #### Returns
 
-```typescript
-{
-  success: boolean
-  data: {
-    variables: Record<string, any>
-    metadata: {
-      programName: string
-      deployer: string
-      accessControl: string
-      allowedAddresses: string[]
-      created: number
-      lastModified: number
-      size: number
-    }
-  } | any // If key specified, returns just the value
-}
-```
+`Promise<StorageProgramResponse>` — see [`StorageProgramResponse`](#storageprogramresponse). The `success` field indicates whether the lookup resolved; on failure, `error` and `errorCode` are populated.
 
 #### Example
 
 ```typescript
-// Read all data
-const result = await demos.storageProgram.read("stor-abc123...")
-console.log('Data:', result.data.variables)
-console.log('Metadata:', result.data.metadata)
+const result = await demos.storagePrograms.read("stor-7a8b9c...")
 
-// Read specific key
-const username = await demos.storageProgram.read("stor-abc123...", "username")
-console.log('Username:', username)
-```
-
-#### Errors
-
-- **403**: Access denied
-- **404**: Storage program not found
-
----
-
-### updateAccessControl()
-
-Update access control settings (deployer only).
-
-#### Signature
-
-```typescript
-async updateAccessControl(
-  storageAddress: string,
-  updates: {
-    accessControl?: "private" | "public" | "restricted" | "deployer-only"
-    allowedAddresses?: string[]
-  }
-): Promise<StorageProgramUpdateResult>
-```
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `storageAddress` | `string` | ✅ | Storage Program address |
-| `updates.accessControl` | `AccessControlMode` | ❌ | New access mode |
-| `updates.allowedAddresses` | `string[]` | ❌ | New whitelist |
-
-#### Returns
-
-```typescript
-{
-  success: boolean
-  txHash: string
-  message?: string
+if (result.success) {
+    console.log(result.data)         // top-level data field
+    console.log(result.metadata)     // top-level metadata field
+    console.log(result.sizeBytes)    // top-level sizeBytes field
+} else {
+    console.error(result.errorCode, result.error)
 }
 ```
 
-#### Example
+<Info>
+Reads do not produce a transaction and incur no fee. The response shape is flat — fields like `data`, `metadata`, `owner`, `sizeBytes`, `createdAt`, `updatedAt` live at the top level of the response object, not nested under `data.variables` / `data.metadata`.
+</Info>
+
+## `StorageProgram` static helpers
+
+All payload builders and validators are **static methods** on the `StorageProgram` class. They are pure (with the exception of the async query helpers documented under [RPC Queries](./rpc-queries)) — they build typed payloads, they do not broadcast.
+
+### Address derivation
+
+#### `StorageProgram.deriveStorageAddress`
+
+Computes the deterministic storage address for a (deployer, programName, nonce, salt) tuple.
+
+##### Signature
 
 ```typescript
-// Change access mode
-await demos.storageProgram.updateAccessControl(
-  "stor-abc123...",
-  { accessControl: "public" }
-)
-
-// Update allowed addresses
-await demos.storageProgram.updateAccessControl(
-  "stor-abc123...",
-  {
-    allowedAddresses: ["0x1111...", "0x2222...", "0x3333..."]
-  }
-)
-```
-
-#### Errors
-
-- **403**: Only deployer can update access control
-- **400**: Restricted mode requires allowedAddresses
-
----
-
-### delete()
-
-Delete a Storage Program (deployer only).
-
-#### Signature
-
-```typescript
-async delete(
-  storageAddress: string
-): Promise<StorageProgramDeleteResult>
-```
-
-#### Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `storageAddress` | `string` | ✅ | Storage Program address |
-
-#### Returns
-
-```typescript
-{
-  success: boolean
-  txHash: string
-  message?: string
-}
-```
-
-#### Example
-
-```typescript
-await demos.storageProgram.delete("stor-abc123...")
-console.log('Storage program deleted')
-```
-
-#### Errors
-
-- **403**: Only deployer can delete
-
----
-
-## Utility Functions
-
-### deriveStorageAddress()
-
-Calculate storage address client-side.
-
-#### Signature
-
-```typescript
-function deriveStorageAddress(
-  deployerAddress: string,
-  programName: string,
-  salt?: string
+static deriveStorageAddress(
+    deployerAddress: string,
+    programName: string,
+    nonce: number,
+    salt?: string,
 ): string
 ```
 
-#### Parameters
+##### Parameters
 
 | Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `deployerAddress` | `string` | ✅ | Deployer's wallet address |
-| `programName` | `string` | ✅ | Program name |
-| `salt` | `string` | ❌ | Optional salt (default: "") |
+| --- | --- | --- | --- |
+| `deployerAddress` | `string` | yes | The address that will own the program. |
+| `programName` | `string` | yes | Human-readable name of the program. |
+| `nonce` | `number` | yes | Sender's account nonce — guarantees a unique address per transaction even when `programName` collides. |
+| `salt` | `string` | no | Optional extra entropy. Defaults to `""`. |
 
-#### Returns
+##### Returns
 
-`string` - Storage address in format `stor-{40 hex chars}`
+`string` — `stor-` followed by the first 40 characters of `sha256("<deployer>:<programName>:<nonce>:<salt>")`.
 
-#### Example
+##### Example
 
 ```typescript
-import { deriveStorageAddress } from '@kynesyslabs/demosdk/storage'
+const address = StorageProgram.deriveStorageAddress(
+    "demos1abc...",
+    "myConfig",
+    42,
+    "salt123",
+)
+// "stor-7a8b9c..."  (40 hex chars after the "stor-" prefix)
+```
 
-const address = deriveStorageAddress(
-  "0xdeployer123...",
-  "myApp",
-  "v1"
+### Program operations
+
+#### `StorageProgram.createStorageProgram`
+
+Builds a `CREATE_STORAGE_PROGRAM` payload. The storage address is derived inside the helper from `(deployerAddress, programName, options.nonce, options.salt)`.
+
+##### Signature
+
+```typescript
+static createStorageProgram(
+    deployerAddress: string,
+    programName: string,
+    data: Record<string, any> | string,
+    encoding?: StorageEncoding,
+    acl?: Partial<StorageProgramACL>,
+    options?: {
+        nonce: number
+        salt?: string
+        metadata?: Record<string, unknown>
+        storageLocation?: StorageLocation
+    },
+): StorageProgramPayload
+```
+
+##### Parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `deployerAddress` | `string` | yes | The creator's address; becomes the program owner. |
+| `programName` | `string` | yes | Unique-per-deployer-per-nonce program name. |
+| `data` | `Record<string, any> \| string` | yes | Initial payload — JSON object for `"json"` encoding, base64 string for `"binary"`. |
+| `encoding` | `StorageEncoding` | no | `"json"` (default) or `"binary"`. |
+| `acl` | `Partial<StorageProgramACL>` | no | Access control. Missing fields default to `{ mode: "owner" }`. |
+| `options` | `{ nonce; salt?; metadata?; storageLocation? }` | yes | `nonce` is **required**. |
+
+##### Returns
+
+`StorageProgramPayload` with `operation: "CREATE_STORAGE_PROGRAM"` and `storageLocation` defaulting to `"onchain"` when omitted.
+
+##### Throws
+
+- `"nonce is required for storage program creation"` if `options.nonce` is `undefined`.
+
+##### Example
+
+```typescript
+// JSON storage with public read access
+const payload = StorageProgram.createStorageProgram(
+    "demos1abc...",
+    "appConfig",
+    { version: "1.0", features: ["auth", "storage"] },
+    "json",
+    { mode: "public" },
+    { nonce: 42 },
 )
 
-console.log(address) // "stor-a1b2c3d4e5f6..."
+// Binary storage with group ACL and metadata
+const binary = StorageProgram.createStorageProgram(
+    "demos1abc...",
+    "teamDocument",
+    base64EncodedPdf,
+    "binary",
+    {
+        mode: "restricted",
+        groups: {
+            editors: {
+                members: ["demos1a...", "demos1b..."],
+                permissions: ["read", "write"],
+            },
+            viewers: {
+                members: ["demos1c..."],
+                permissions: ["read"],
+            },
+        },
+    },
+    {
+        nonce: 43,
+        metadata: { filename: "report.pdf", mimeType: "application/pdf" },
+    },
+)
 ```
 
----
+#### `StorageProgram.writeStorage`
 
-### getDataSize()
+Builds a `WRITE_STORAGE` payload that **replaces** the entire `data` field of an existing program. For surgical updates, use the granular helpers below.
 
-Calculate data size in bytes.
-
-#### Signature
+##### Signature
 
 ```typescript
-function getDataSize(data: Record<string, any>): number
+static writeStorage(
+    storageAddress: string,
+    data: Record<string, any> | string,
+    encoding?: StorageEncoding,
+): StorageProgramPayload
 ```
 
-#### Parameters
+##### Parameters
 
 | Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `data` | `Record<string, any>` | ✅ | Data object to measure |
+| --- | --- | --- | --- |
+| `storageAddress` | `string` | yes | The `stor-{hash}` address. |
+| `data` | `Record<string, any> \| string` | yes | New payload (must match the program's encoding). |
+| `encoding` | `StorageEncoding` | no | `"json"` (default) or `"binary"`. |
 
-#### Returns
+##### Returns
 
-`number` - Size in bytes (UTF-8 encoded JSON)
+`StorageProgramPayload` with `operation: "WRITE_STORAGE"`.
 
-#### Example
+##### Example
 
 ```typescript
-import { getDataSize } from '@kynesyslabs/demosdk/storage'
-
-const data = { username: "alice", posts: [] }
-const size = getDataSize(data)
-
-console.log(`Data size: ${size} bytes`)
-
-if (size > 128 * 1024) {
-  console.error('Data too large!')
-}
+const payload = StorageProgram.writeStorage(
+    "stor-7a8b9c...",
+    { newKey: "value", existingKey: "updatedValue" },
+    "json",
+)
 ```
 
----
+#### `StorageProgram.readStorage`
 
-## RPC Endpoints
+Builds a `READ_STORAGE` payload **for transaction validation only**. This does **not** perform an actual read — use [`demos.storagePrograms.read`](#demos-storageprograms-read) (or one of the [RPC query helpers](./rpc-queries)) to fetch program data.
 
-### getStorageProgram
+##### Signature
 
-Query Storage Program data via RPC.
-
-#### Endpoint
-
-`POST /rpc`
-
-#### Request Payload
-
-```json
-{
-  "message": "getStorageProgram",
-  "data": {
-    "storageAddress": "stor-abc123...",
-    "key": "username" // Optional
-  }
-}
+```typescript
+static readStorage(storageAddress: string): StorageProgramPayload
 ```
 
-#### Response
+##### Returns
 
-```json
-{
-  "result": 200,
-  "response": {
-    "success": true,
-    "data": {
-      "variables": {
-        "username": "alice",
-        "email": "alice@example.com"
-      },
-      "metadata": {
-        "programName": "userProfile",
-        "deployer": "0xabc123...",
-        "accessControl": "private",
-        "allowedAddresses": [],
-        "created": 1706745600000,
-        "lastModified": 1706745700000,
-        "size": 2048
-      }
+`StorageProgramPayload` with `operation: "READ_STORAGE"` — useful when you need to construct a payload object for validation pipelines or type-guards.
+
+##### Example
+
+```typescript
+// Validation only — does NOT fetch data
+const payload = StorageProgram.readStorage("stor-7a8b9c...")
+
+// Real read:
+const data = await demos.storagePrograms.read("stor-7a8b9c...")
+```
+
+#### `StorageProgram.updateAccessControl`
+
+Builds an `UPDATE_ACCESS_CONTROL` payload. Owner-only at execution time.
+
+##### Signature
+
+```typescript
+static updateAccessControl(
+    storageAddress: string,
+    acl: Partial<StorageProgramACL>,
+): StorageProgramPayload
+```
+
+##### Parameters
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `storageAddress` | `string` | yes | The program address. |
+| `acl` | `Partial<StorageProgramACL>` | yes | New ACL configuration. The full ACL is replaced — to keep existing fields, include them. |
+
+##### Returns
+
+`StorageProgramPayload` with `operation: "UPDATE_ACCESS_CONTROL"`.
+
+##### Example
+
+```typescript
+// Make the program public
+StorageProgram.updateAccessControl("stor-7a8b9c...", { mode: "public" })
+
+// Block specific addresses while staying public
+StorageProgram.updateAccessControl("stor-7a8b9c...", {
+    mode: "public",
+    blacklisted: ["demos1bad...", "demos1spam..."],
+})
+
+// Group-based access
+StorageProgram.updateAccessControl("stor-7a8b9c...", {
+    mode: "restricted",
+    groups: {
+        admins: { members: ["demos1admin..."], permissions: ["read", "write", "delete"] },
+        users:  { members: ["demos1u1...", "demos1u2..."], permissions: ["read"] },
     },
-    "metadata": { /* same as data.metadata */ }
-  }
-}
+})
 ```
 
-#### Error Responses
+#### `StorageProgram.deleteStorageProgram`
 
-**400 - Missing Parameter**:
-```json
-{
-  "result": 400,
-  "response": {
-    "error": "Missing storageAddress parameter"
-  }
-}
-```
+Builds a `DELETE_STORAGE_PROGRAM` payload. Irreversible at execution time; the program and all stored data are removed.
 
-**404 - Not Found**:
-```json
-{
-  "result": 404,
-  "response": {
-    "error": "Storage program not found"
-  }
-}
-```
-
-**500 - Server Error**:
-```json
-{
-  "result": 500,
-  "response": {
-    "error": "Internal server error",
-    "details": "Database connection failed"
-  }
-}
-```
-
----
-
-## Transaction Payloads
-
-### CREATE_STORAGE_PROGRAM
+##### Signature
 
 ```typescript
-{
-  operation: "CREATE_STORAGE_PROGRAM"
-  storageAddress: string
-  programName: string
-  accessControl: "private" | "public" | "restricted" | "deployer-only"
-  allowedAddresses?: string[]
-  data: Record<string, any>
+static deleteStorageProgram(storageAddress: string): StorageProgramPayload
+```
+
+##### Returns
+
+`StorageProgramPayload` with `operation: "DELETE_STORAGE_PROGRAM"`.
+
+##### Example
+
+```typescript
+const payload = StorageProgram.deleteStorageProgram("stor-7a8b9c...")
+```
+
+### Granular field operations
+
+These helpers build payloads for in-place edits to JSON-encoded programs. Each is rejected by the chain when applied to a binary-encoded program.
+
+#### `StorageProgram.setField`
+
+Sets a single top-level field to a value.
+
+##### Signature
+
+```typescript
+static setField(
+    storageAddress: string,
+    field: string,
+    value: unknown,
+): StorageProgramPayload
+```
+
+##### Returns
+
+`StorageProgramPayload` with `operation: "SET_FIELD"`, plus `field` and `value`.
+
+##### Example
+
+```typescript
+StorageProgram.setField("stor-7a8b9c...", "theme", "dark")
+```
+
+#### `StorageProgram.setItem`
+
+Replaces an item at `index` inside an array field. Negative indexing is supported (`-1` = last element).
+
+##### Signature
+
+```typescript
+static setItem(
+    storageAddress: string,
+    field: string,
+    index: number,
+    value: unknown,
+): StorageProgramPayload
+```
+
+##### Returns
+
+`StorageProgramPayload` with `operation: "SET_ITEM"`, plus `field`, `index`, and `value`.
+
+##### Example
+
+```typescript
+// Replace the first user
+StorageProgram.setItem("stor-7a8b9c...", "users", 0, { name: "Updated", role: "admin" })
+
+// Replace the last user
+StorageProgram.setItem("stor-7a8b9c...", "users", -1, { name: "Last", role: "user" })
+```
+
+#### `StorageProgram.appendItem`
+
+Appends an item to an array field.
+
+##### Signature
+
+```typescript
+static appendItem(
+    storageAddress: string,
+    field: string,
+    value: unknown,
+): StorageProgramPayload
+```
+
+##### Returns
+
+`StorageProgramPayload` with `operation: "APPEND_ITEM"`, plus `field` and `value`.
+
+##### Example
+
+```typescript
+StorageProgram.appendItem("stor-7a8b9c...", "users", { name: "New", role: "viewer" })
+```
+
+#### `StorageProgram.deleteField`
+
+Removes a top-level field from the stored object entirely.
+
+##### Signature
+
+```typescript
+static deleteField(
+    storageAddress: string,
+    field: string,
+): StorageProgramPayload
+```
+
+##### Returns
+
+`StorageProgramPayload` with `operation: "DELETE_FIELD"`, plus `field`.
+
+##### Example
+
+```typescript
+StorageProgram.deleteField("stor-7a8b9c...", "legacyConfig")
+```
+
+#### `StorageProgram.deleteItem`
+
+Removes the item at `index` from an array field. Negative indexing is supported. The array is compacted after removal.
+
+##### Signature
+
+```typescript
+static deleteItem(
+    storageAddress: string,
+    field: string,
+    index: number,
+): StorageProgramPayload
+```
+
+##### Returns
+
+`StorageProgramPayload` with `operation: "DELETE_ITEM"`, plus `field` and `index`.
+
+##### Example
+
+```typescript
+// Remove the first item
+StorageProgram.deleteItem("stor-7a8b9c...", "users", 0)
+
+// Remove the last item
+StorageProgram.deleteItem("stor-7a8b9c...", "users", -1)
+```
+
+### Validators
+
+#### `StorageProgram.validateSize`
+
+Returns `true` when the data fits within `STORAGE_PROGRAM_CONSTANTS.MAX_SIZE_BYTES` (1 MB).
+
+##### Signature
+
+```typescript
+static validateSize(
+    data: Record<string, any> | string,
+    encoding?: StorageEncoding,
+): boolean
+```
+
+##### Example
+
+```typescript
+if (!StorageProgram.validateSize(data, "json")) {
+    throw new Error("Payload exceeds 1 MB")
 }
 ```
 
-### WRITE_STORAGE
+#### `StorageProgram.getDataSize`
+
+Returns the size of the data in bytes. For `"binary"` encoding, the input is treated as base64 and the **decoded** byte length is returned. For `"json"` encoding, `JSON.stringify` is run and the UTF-8 byte length of the result is returned.
+
+##### Signature
 
 ```typescript
-{
-  operation: "WRITE_STORAGE"
-  storageAddress: string
-  data: Record<string, any>
+static getDataSize(
+    data: Record<string, any> | string,
+    encoding?: StorageEncoding,
+): number
+```
+
+##### Example
+
+```typescript
+const size = StorageProgram.getDataSize({ key: "value" }, "json")
+console.log(`Data size: ${size} bytes`)
+```
+
+#### `StorageProgram.validateNestingDepth`
+
+Returns `true` when the JSON object's nesting depth is `<= maxDepth`. JSON-only.
+
+##### Signature
+
+```typescript
+static validateNestingDepth(
+    data: any,
+    maxDepth?: number,
+): boolean
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `data` | `any` | — | Object to inspect. |
+| `maxDepth` | `number` | `STORAGE_PROGRAM_CONSTANTS.MAX_JSON_NESTING_DEPTH` (`64`) | Maximum allowed nesting depth. |
+
+##### Example
+
+```typescript
+if (!StorageProgram.validateNestingDepth(data)) {
+    throw new Error("JSON nesting too deep (>64 levels)")
 }
 ```
 
-### UPDATE_ACCESS_CONTROL
+#### `StorageProgram.calculateStorageFee`
+
+Computes the storage fee for a payload. Pricing is **1 DEM per 10 KB chunk, minimum 1 DEM**, returned as a `bigint` in OS (1 DEM = 10⁹ OS).
+
+##### Signature
 
 ```typescript
-{
-  operation: "UPDATE_ACCESS_CONTROL"
-  storageAddress: string
-  accessControl?: "private" | "public" | "restricted" | "deployer-only"
-  allowedAddresses?: string[]
-}
+static calculateStorageFee(
+    data: Record<string, any> | string,
+    encoding?: StorageEncoding,
+): bigint
 ```
 
-### DELETE_STORAGE_PROGRAM
+##### Returns
+
+`bigint` — fee in OS. Use `denomination.osToDem` (from `@kynesyslabs/demosdk`) to convert to whole DEM for display.
+
+##### Example
 
 ```typescript
-{
-  operation: "DELETE_STORAGE_PROGRAM"
-  storageAddress: string
-}
+import { denomination } from "@kynesyslabs/demosdk"
+
+const feeOs = StorageProgram.calculateStorageFee({ key: "value" }, "json")
+console.log(`Storage fee: ${denomination.osToDem(feeOs)} DEM`)
+
+// Reference points:
+//   5 KB  -> 1 DEM
+//  15 KB  -> 2 DEM
+// 100 KB  -> 10 DEM
+//   1 MB  -> 103 DEM
 ```
 
----
+## Type reference
 
-## Response Formats
+### `StorageProgramPayload`
 
-### Success Response
-
-```typescript
-{
-  success: true
-  txHash: string        // For write operations
-  storageAddress: string // For create operation
-  message?: string
-  gcrEdits?: GCREdit[]  // Internal: GCR modifications
-}
-```
-
-### Error Response
-
-```typescript
-{
-  success: false
-  message: string
-  error?: string
-  code?: number
-}
-```
-
----
-
-## Constants and Limits
-
-### Storage Limits
-
-```typescript
-const STORAGE_LIMITS = {
-  MAX_SIZE_BYTES: 131072,      // 128KB (128 * 1024)
-  MAX_NESTING_DEPTH: 64,       // 64 levels of nested objects
-  MAX_KEY_LENGTH: 256          // 256 characters per key name
-}
-```
-
-### Access Control Modes
-
-```typescript
-type AccessControlMode =
-  | "private"         // Deployer only (read & write)
-  | "public"          // Anyone reads, deployer writes
-  | "restricted"      // Deployer + whitelist
-  | "deployer-only"   // Explicit deployer-only
-```
-
-### Address Format
-
-- **Prefix**: `stor-`
-- **Hash**: 40 hex characters (SHA256)
-- **Total Length**: 45 characters
-- **Pattern**: `/^stor-[a-f0-9]{40}$/`
-
----
-
-## Types and Interfaces
-
-### StorageProgramPayload
+The single payload shape produced by every `StorageProgram.*` builder. Different operations populate different subsets of fields.
 
 ```typescript
 interface StorageProgramPayload {
-  operation:
+    operation: StorageProgramOperation
+    storageAddress: string
+
+    /** Required for CREATE_STORAGE_PROGRAM */
+    programName?: string
+
+    /** "json" (default) or "binary" */
+    encoding?: StorageEncoding
+
+    /**
+     * For json encoding: Record<string, any> (max 64 nesting levels)
+     * For binary encoding: base64 encoded string
+     * Max size: 1 MB.
+     */
+    data?: Record<string, any> | string
+
+    /** Robust ACL: owner / public / restricted, plus allowed/blacklisted/groups */
+    acl?: StorageProgramACL
+
+    /** @deprecated Use `acl` instead. */
+    accessControl?: StorageProgramAccessControl
+
+    /** @deprecated Use `acl.allowed` instead. */
+    allowedAddresses?: string[]
+
+    /** Optional salt mixed into address derivation */
+    salt?: string
+
+    /** Optional free-form metadata (filename, mimeType, description, ...) */
+    metadata?: Record<string, unknown>
+
+    /** "onchain" (default). "ipfs" is reserved and currently falls back to onchain. */
+    storageLocation?: StorageLocation
+
+    // Granular operation fields (JSON encoding only)
+
+    /** Required for SET_FIELD / SET_ITEM / APPEND_ITEM / DELETE_FIELD / DELETE_ITEM */
+    field?: string
+
+    /** Required for SET_ITEM and DELETE_ITEM */
+    index?: number
+
+    /** Required for SET_FIELD / SET_ITEM / APPEND_ITEM */
+    value?: unknown
+}
+```
+
+### `StorageProgramACL`
+
+```typescript
+interface StorageProgramACL {
+    /** Default behavior when no other rule matches */
+    mode: StorageACLMode
+
+    /** Addresses explicitly allowed to read/write */
+    allowed?: string[]
+
+    /** Addresses explicitly blocked (wins over allowed/groups) */
+    blacklisted?: string[]
+
+    /** Named groups with members and per-group permissions */
+    groups?: Record<string, StorageGroupPermissions>
+}
+```
+
+ACL resolution order (highest priority first):
+
+1. Owner — full access, always.
+2. Blacklisted — denied, regardless of allowed/groups.
+3. `allowed` — full permissions granted.
+4. `groups` — per-group permission check.
+5. `mode` fallback — `"owner"` and `"restricted"` deny; `"public"` allows read.
+
+### `StorageGroupPermissions`
+
+```typescript
+interface StorageGroupPermissions {
+    members: string[]
+    permissions: ("read" | "write" | "delete")[]
+}
+```
+
+### `StorageACLMode`
+
+```typescript
+type StorageACLMode = "owner" | "public" | "restricted"
+```
+
+| Mode | Default behavior (no other rule matched) |
+| --- | --- |
+| `"owner"` | Owner only. Most restrictive. |
+| `"public"` | Anyone reads, only the owner writes. |
+| `"restricted"` | Only addresses in `allowed` / `groups` may access. |
+
+### `StorageEncoding`
+
+```typescript
+type StorageEncoding = "json" | "binary"
+```
+
+- `"json"` — `data` is `Record<string, any>`.
+- `"binary"` — `data` is a base64 string.
+
+### `StorageLocation`
+
+```typescript
+type StorageLocation = "onchain" | "ipfs"
+```
+
+`"ipfs"` is reserved for future hybrid storage and is **not yet implemented** — payloads with `storageLocation: "ipfs"` currently fall back to `"onchain"`.
+
+### `StorageProgramOperation`
+
+```typescript
+type StorageProgramOperation =
     | "CREATE_STORAGE_PROGRAM"
     | "WRITE_STORAGE"
     | "READ_STORAGE"
     | "UPDATE_ACCESS_CONTROL"
     | "DELETE_STORAGE_PROGRAM"
-
-  storageAddress: string
-  programName?: string
-  accessControl?: AccessControlMode
-  allowedAddresses?: string[]
-  data?: Record<string, any>
-}
+    | "SET_FIELD"
+    | "SET_ITEM"
+    | "APPEND_ITEM"
+    | "DELETE_FIELD"
+    | "DELETE_ITEM"
 ```
 
-### StorageProgramMetadata
+`READ_STORAGE` is a query operation — it is not submitted as a transaction in normal usage.
+
+### `StorageProgramTransactionContent`
 
 ```typescript
-interface StorageProgramMetadata {
-  programName: string
-  deployer: string
-  accessControl: AccessControlMode
-  allowedAddresses: string[]
-  created: number          // Unix timestamp (ms)
-  lastModified: number     // Unix timestamp (ms)
-  size: number            // Bytes
+type StorageProgramTransactionContent = Omit<TransactionContent, "type" | "data"> & {
+    type: "storageProgram"
+    data: ["storageProgram", StorageProgramPayload]
 }
 ```
 
-### StorageProgramData
+### `StorageProgramTransaction`
+
+```typescript
+interface StorageProgramTransaction extends Omit<Transaction, "content"> {
+    content: StorageProgramTransactionContent
+}
+```
+
+### `StorageProgramData`
+
+Returned by node-level RPC queries (e.g. `StorageProgram.getByAddress`).
 
 ```typescript
 interface StorageProgramData {
-  variables: Record<string, any>
-  metadata: StorageProgramMetadata
+    storageAddress: string
+    owner: string
+    programName: string
+    encoding: "json" | "binary"
+    data?: Record<string, unknown> | string | null
+    metadata?: Record<string, unknown> | null
+    storageLocation: string
+    sizeBytes: number
+    createdAt: string
+    updatedAt: string
+    /** Transaction hash that created this storage program */
+    createdByTx?: string
+    /** Transaction hash of the last modification */
+    lastModifiedByTx?: string
+    /** All transaction hashes that touched this program */
+    interactionTxs?: string[]
 }
 ```
 
-### GCREdit
+### `StorageProgramListItem`
 
 ```typescript
-interface GCREdit {
-  type: "storageProgram"
-  target: string          // Storage address
-  context: {
-    operation: string
-    data?: {
-      variables?: Record<string, any>
-      metadata?: Partial<StorageProgramMetadata>
-    }
-    sender?: string
-  }
-  txhash?: string
+interface StorageProgramListItem {
+    storageAddress: string
+    programName: string
+    encoding: "json" | "binary"
+    sizeBytes: number
+    storageLocation: string
+    createdAt: string
+    updatedAt: string
 }
 ```
 
----
+### `StorageProgramResponse`
 
-## Error Codes
-
-### HTTP Status Codes
-
-| Code | Meaning | Description |
-|------|---------|-------------|
-| 200 | Success | Operation completed successfully |
-| 400 | Bad Request | Invalid parameters or validation failed |
-| 403 | Forbidden | Access denied |
-| 404 | Not Found | Storage program doesn't exist |
-| 500 | Server Error | Internal error or database failure |
-
-### Common Error Messages
-
-#### Validation Errors
-
-```
-"Data size {size} bytes exceeds limit of 131072 bytes (128KB)"
-"Nesting depth {depth} exceeds limit of 64"
-"Key length {length} exceeds limit of 256"
-"Restricted mode requires allowedAddresses list"
-"Unknown access control mode: {mode}"
-```
-
-#### Access Control Errors
-
-```
-"Access denied: private mode allows deployer only"
-"Access denied: public mode allows deployer to write only"
-"Access denied: address not in allowlist"
-"Only deployer can perform admin operations"
-```
-
-#### Operation Errors
-
-```
-"Storage program not found"
-"Storage program does not exist"
-"READ_STORAGE is a query operation, use RPC endpoints"
-"Unknown storage program operation: {operation}"
-```
-
----
-
-## Usage Examples
-
-### Complete Transaction Flow
+The response shape returned by `demos.storagePrograms.read`. All payload fields are top-level — there is no nested `data.variables` / `data.metadata` envelope.
 
 ```typescript
-import { DemosClient } from '@kynesyslabs/demosdk'
-import { deriveStorageAddress, getDataSize } from '@kynesyslabs/demosdk/storage'
-
-// Initialize client
-const demos = new DemosClient({
-  rpcUrl: 'https://rpc.demos.network',
-  privateKey: process.env.PRIVATE_KEY
-})
-
-// 1. Derive address before creation
-const myAddress = await demos.getAddress()
-const storageAddress = deriveStorageAddress(myAddress, "myApp", "v1")
-console.log('Storage will be created at:', storageAddress)
-
-// 2. Check data size before creating
-const initialData = {
-  username: "alice",
-  settings: { theme: "dark" }
-}
-const size = getDataSize(initialData)
-console.log(`Data size: ${size} bytes`)
-
-if (size > 128 * 1024) {
-  throw new Error('Data too large')
-}
-
-// 3. Create storage program
-const createResult = await demos.storageProgram.create(
-  "myApp",
-  "private",
-  {
-    initialData: initialData,
-    salt: "v1"
-  }
-)
-
-console.log('Created:', createResult.storageAddress)
-console.log('TX:', createResult.txHash)
-
-// 4. Wait for confirmation
-await demos.waitForTransaction(createResult.txHash)
-
-// 5. Read data (free RPC query)
-const data = await demos.storageProgram.read(storageAddress)
-console.log('Variables:', data.data.variables)
-console.log('Metadata:', data.data.metadata)
-
-// 6. Update data
-await demos.storageProgram.write(storageAddress, {
-  bio: "Web3 developer",
-  lastActive: Date.now()
-})
-
-// 7. Read updated data
-const updated = await demos.storageProgram.read(storageAddress)
-console.log('Updated:', updated.data.variables)
-```
-
-### Error Handling Pattern
-
-```typescript
-async function safeStorageOperation() {
-  try {
-    const result = await demos.storageProgram.create(
-      "myProgram",
-      "restricted",
-      {
-        allowedAddresses: ["0x1111..."],
-        initialData: { data: "value" }
-      }
-    )
-
-    return { success: true, data: result }
-
-  } catch (error: any) {
-    // Handle specific errors
-    if (error.message?.includes('exceeds limit')) {
-      return { success: false, error: 'Data too large' }
-    }
-
-    if (error.message?.includes('Access denied')) {
-      return { success: false, error: 'Permission denied' }
-    }
-
-    if (error.code === 404) {
-      return { success: false, error: 'Not found' }
-    }
-
-    // Generic error
-    return { success: false, error: error.message }
-  }
+interface StorageProgramResponse {
+    success: boolean
+    storageAddress?: string
+    owner?: string
+    programName?: string
+    encoding?: "json" | "binary"
+    data?: Record<string, unknown> | string | null
+    metadata?: Record<string, unknown> | null
+    storageLocation?: string
+    sizeBytes?: number
+    createdAt?: string
+    updatedAt?: string
+    error?: string
+    errorCode?: string
 }
 ```
 
----
+### `StorageFieldType`
 
-## Best Practices
-
-### 1. Address Derivation
-
-Always derive addresses client-side before creating:
+Returned by the `getFieldType` RPC helper.
 
 ```typescript
-// ✅ GOOD
-const address = deriveStorageAddress(deployer, name, salt)
-// ... prepare data ...
-await demos.storageProgram.create(name, mode, { salt })
-
-// ❌ BAD
-const result = await demos.storageProgram.create(name, mode)
-// Where is it? Have to check result.storageAddress
+type StorageFieldType =
+    | "string"
+    | "number"
+    | "boolean"
+    | "array"
+    | "object"
+    | "null"
+    | "undefined"
 ```
 
-### 2. Size Validation
-
-Check size before operations:
+### `StorageProgramFieldsResponse`
 
 ```typescript
-// ✅ GOOD
-const size = getDataSize(data)
-if (size > 128 * 1024) {
-  throw new Error('Data too large')
+interface StorageProgramFieldsResponse {
+    fields: string[]
+    count: number
 }
-await demos.storageProgram.write(address, data)
-
-// ❌ BAD
-await demos.storageProgram.write(address, data)
-// Transaction fails, gas wasted
 ```
 
-### 3. Access Control
+## Constants
 
-Start restrictive, expand as needed:
+### `STORAGE_PROGRAM_CONSTANTS`
 
 ```typescript
-// ✅ GOOD
-await demos.storageProgram.create(name, "deployer-only")
-// ... later, when ready ...
-await demos.storageProgram.updateAccessControl(addr, {
-  accessControl: "public"
-})
-
-// ❌ BAD
-await demos.storageProgram.create(name, "public")
-// Can't take it back!
+import { STORAGE_PROGRAM_CONSTANTS } from "@kynesyslabs/demosdk/storage"
 ```
 
-### 4. Read Operations
+| Constant | Value | Meaning |
+| --- | --- | --- |
+| `MAX_SIZE_BYTES` | `1_048_576` (1 MB) | Hard cap on payload size for both JSON and binary encodings. |
+| `PRICING_CHUNK_BYTES` | `10_240` (10 KB) | Granularity for fee calculation. |
+| `FEE_PER_CHUNK` | `OS_PER_DEM` (`10⁹` OS = 1 DEM) | Fee per chunk, expressed as a `bigint` in OS. |
+| `MAX_JSON_NESTING_DEPTH` | `64` | Maximum nesting depth for JSON encoding. |
 
-Use specific key reads when possible:
+The object is declared `as const`, so its fields are read-only.
+
+## Type guards
+
+Runtime narrowing helpers exported from `@kynesyslabs/demosdk/storage`.
+
+### `isStorageProgramPayload`
 
 ```typescript
-// ✅ GOOD
-const username = await demos.storageProgram.read(addr, "username")
-
-// ❌ BAD (if you only need username)
-const all = await demos.storageProgram.read(addr)
-const username = all.data.variables.username
+function isStorageProgramPayload(payload: unknown): payload is StorageProgramPayload
 ```
 
-### 5. Error Handling
+Returns `true` when `payload` is a non-null object with a `string` `storageAddress` and a `string` `operation` matching one of the values in [`StorageProgramOperation`](#storageprogramoperation).
 
-Always handle errors gracefully:
+### `isValidEncoding`
 
 ```typescript
-// ✅ GOOD
-try {
-  const result = await demos.storageProgram.read(addr)
-  return result.data
-} catch (error) {
-  console.error('Read failed:', error)
-  return null
-}
-
-// ❌ BAD
-const result = await demos.storageProgram.read(addr)
-// Unhandled promise rejection
+function isValidEncoding(encoding: unknown): encoding is StorageEncoding
 ```
 
----
+Returns `true` only for `"json"` or `"binary"`.
 
-## Feature Summary
+### `isValidStorageLocation`
 
-- Initial Storage Programs implementation
-- CREATE, WRITE, READ, UPDATE_ACCESS_CONTROL, DELETE operations
-- Four access control modes
-- 128KB size limit
-- 64 level nesting depth
-- 256 character key names
+```typescript
+function isValidStorageLocation(location: unknown): location is StorageLocation
+```
 
----
+Returns `true` only for `"onchain"` or `"ipfs"`.
 
-## See Also
+## Deprecated members
 
-- [Getting Started Guide](./getting-started)
-- [Operations Guide](./operations)
-- [Access Control Guide](./access-control)
-- [RPC Queries Guide](./rpc-queries)
-- [Examples](../cookbook/storage-programs/examples)
-- [Overview](/sdk/storage-programs/overview)
+These exist for backward compatibility with pre-v3 storage programs and should not be used in new code.
+
+| Deprecated | Replacement |
+| --- | --- |
+| `StorageProgram.createStorageProgramLegacy(...)` | `StorageProgram.createStorageProgram(..., acl, options)` |
+| `StorageProgram.updateAccessControlLegacy(...)` | `StorageProgram.updateAccessControl(address, acl)` |
+| `StorageProgramAccessControl` (`"private" \| "public" \| "restricted" \| "deployer-only"`) | `StorageACLMode` (`"owner" \| "public" \| "restricted"`) inside `StorageProgramACL` |
+| `StorageProgramPayload.accessControl` | `StorageProgramPayload.acl.mode` |
+| `StorageProgramPayload.allowedAddresses` | `StorageProgramPayload.acl.allowed` |
+
+The legacy `"private"` and `"deployer-only"` modes both map to the modern `mode: "owner"`.
+
+## Cross-references
+
+- [Getting Started](./getting-started) — end-to-end walkthrough (connect, build, sign, broadcast, read).
+- [Operations](./operations) — when to use create vs. write vs. granular ops, and the full lifecycle.
+- [Access Control](./access-control) — `owner` / `public` / `restricted`, allowlists, blacklists, groups, and resolution order.
+- [RPC Queries](./rpc-queries) — node-level queries such as `StorageProgram.getByAddress`, `getByOwner`, `searchByName`, `getFields`, `getValue`, `getItem`, `hasField`, `getFieldType`, `getAll`.
+- [Cookbook: Storage Programs](/sdk/cookbook/storage-programs/examples) — recipes for public profiles, team workspaces, and binary attachments.

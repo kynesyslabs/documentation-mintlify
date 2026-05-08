@@ -1,668 +1,385 @@
 ---
 title: "Rpc Queries"
-description: "Learn how to efficiently read data from Storage Programs using RPC queries."
+description: "Read Storage Programs over RPC — when to use the SDK helper vs. the lower-level rpcCall, and what each of the 9 node endpoints does."
 icon: "server"
 ---
-# RPC Queries Guide
+# RPC Queries
 
-Learn how to efficiently read data from Storage Programs using RPC queries.
+Storage Program reads are served over plain RPC. They cost nothing, require no transaction, and typically come back in well under 100 ms. This page covers the read surface only — for write flow see [Operations](./operations).
 
-## Overview
+## Two read paths
 
-Storage Program reads are served via RPC. They complete without a transaction, so there is no gas fee and responses typically arrive in under 100 ms. Writes still require consensus transactions; this guide focuses only on the read path.
+| You want | Use |
+| --- | --- |
+| The full program for a known address | `demos.storagePrograms.read(address)` — the SDK shortcut |
+| Anything else (list by owner, search, field-level lookup, type/exists checks) | `demos.rpcCall({ method, params })` against one of the 9 node endpoints below |
 
-## Basic RPC Queries
+The SDK does **not** wrap the granular endpoints. There is no `demos.storagePrograms.list()`, `.search()`, or `.getField()`. To call those, drop down to `demos.rpcCall(...)`.
 
-### Read All Data
+<Info>
+The SDK's `read` helper attaches the wallet's identity automatically (via `signMessage`) when a wallet is connected. ACL is enforced server-side: anonymous callers see only public programs; restricted/owner programs require the `requesterAddress` (passed implicitly by `read`, explicitly by `rpcCall`) to be in the ACL.
+</Info>
+
+## Reading a single program
 
 ```typescript
-const result = await demos.storageProgram.read(storageAddress)
+import { Demos } from "@kynesyslabs/demosdk/websdk"
 
-console.log('Variables:', result.data.variables)
-console.log('Metadata:', result.data.metadata)
-```
+const demos = new Demos()
+await demos.connect("https://node2.demos.sh")
+await demos.connectWallet(process.env.MNEMONIC!)  // optional; needed for ACL-gated reads
 
-**Response Structure**:
-```typescript
-{
-  success: true,
-  data: {
-    variables: {
-      // Your stored data
-      username: "alice",
-      settings: { theme: "dark" },
-      posts: [...]
-    },
-    metadata: {
-      programName: "myApp",
-      deployer: "0xabc123...",
-      accessControl: "private",
-      allowedAddresses: [],
-      created: 1706745600000,
-      lastModified: 1706745700000,
-      size: 2048
-    }
-  }
+const result = await demos.storagePrograms.read("stor-7a8b9c...")
+
+if (!result.success) {
+    console.error(result.error, result.errorCode)
+} else {
+    console.log("owner:    ", result.owner)
+    console.log("name:     ", result.programName)
+    console.log("encoding: ", result.encoding)
+    console.log("data:     ", result.data)
+    console.log("metadata: ", result.metadata)
+    console.log("size:     ", result.sizeBytes, "bytes")
+    console.log("updated:  ", result.updatedAt)
 }
 ```
 
-### Read Specific Key
+Under the hood this performs `GET <rpc>/storage-program/<address>` and, when a wallet is connected, attaches `identity: ed25519:<address>` and `signature: <ed25519-sig>` headers. The node uses those headers to resolve the requester for ACL.
+
+### `StorageProgramResponse` shape
+
+This is the actual response interface from `@kynesyslabs/demosdk/storage`:
 
 ```typescript
-// Read single key
-const username = await demos.storageProgram.read(storageAddress, 'username')
-console.log(username) // "alice"
-
-// Read nested object
-const settings = await demos.storageProgram.read(storageAddress, 'settings')
-console.log(settings.theme) // "dark"
-
-// Read array
-const posts = await demos.storageProgram.read(storageAddress, 'posts')
-console.log(posts.length) // Number of posts
+interface StorageProgramResponse {
+    success: boolean
+    storageAddress?: string
+    owner?: string
+    programName?: string
+    encoding?: "json" | "binary"
+    data?: Record<string, unknown> | string | null
+    metadata?: Record<string, unknown> | null
+    storageLocation?: string
+    sizeBytes?: number
+    createdAt?: string  // ISO 8601
+    updatedAt?: string  // ISO 8601
+    error?: string
+    errorCode?: string
+}
 ```
 
-## Performance Optimization
+<Warning>
+There is no `data.variables` or `data.metadata` nesting. `data`, `metadata`, `owner`, `programName`, `encoding`, `sizeBytes`, `createdAt`, `updatedAt` all live at the top level of `StorageProgramResponse`. For binary-encoded programs `data` is a base64-encoded string; for JSON programs it is a `Record<string, unknown>`.
+</Warning>
 
-### Batch Queries
+### Read-time access control
 
-Read multiple storage programs in parallel:
+`success: false` plus an `errorCode` is how access denials surface. The SDK does not throw on ACL rejection — it returns a structured response. Always branch on `result.success` before reading `result.data`.
+
+## The 9 node RPC endpoints
+
+All of these are reached via `demos.rpcCall({ method, params: [{ message, data, muid }] })`. The `message` is the endpoint name; the `data` object carries the parameters. Most endpoints accept an optional `requesterAddress` for ACL — pass `demos.getAddress()` when you have a connected wallet and want non-public programs to resolve.
+
+<Note>
+`rpcCall` returns an `RPCResponse` with shape `{ result: number, response: any, require_reply: boolean, extra: any }`. `result` is an HTTP-style status code (200 on success, 400/403/404/500 on failure). The actual payload lives on `response`. When a program is missing or soft-deleted, the node returns `200 / null` (not 404) for single-program reads.
+</Note>
+
+### 1. `getStorageProgram` — full program by address
+
+Same data the SDK's `read` helper returns, but reachable via `rpcCall` if you'd rather not go through the HTTP route.
 
 ```typescript
-const addresses = [
-  "stor-abc123...",
-  "stor-def456...",
-  "stor-ghi789..."
-]
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "getStorageProgram",
+        data: {
+            storageAddress: "stor-7a8b9c...",
+            requesterAddress: demos.getAddress(),  // optional; required for non-public ACL
+        },
+        muid: `storage-${Date.now()}`,
+    }],
+})
 
-// ✅ GOOD: Parallel queries
-const results = await Promise.all(
-  addresses.map(addr => demos.storageProgram.read(addr))
+if (res.result === 200 && res.response) {
+    const program = res.response  // StorageProgramData
+    console.log(program.programName, program.data)
+}
+```
+
+The `response` is `StorageProgramData` (or `null`) — a slightly richer cousin of `StorageProgramResponse` that adds `createdByTx`, `lastModifiedByTx`, and `interactionTxs[]`.
+
+### 2. `getStorageProgramAll` — full program (alias)
+
+Despite the name, this is **not** a "list everything" endpoint. It takes a `storageAddress` and returns full `StorageProgramData` for that one program — kept as an alias of `getStorageProgram` for SDK back-compat. Same params, same response shape.
+
+```typescript
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "getStorageProgramAll",
+        data: { storageAddress: "stor-7a8b9c...", requesterAddress: demos.getAddress() },
+        muid: `storage-${Date.now()}`,
+    }],
+})
+```
+
+### 3. `getStorageProgramsByOwner` — list by owner (paginated)
+
+Server-side pagination is pushed into SQL — `limit` and `offset` apply before deserialization, so very large owner sets remain cheap. ACL is filtered in the same SQL pass: callers who are not the owner see only programs they have read access to.
+
+```typescript
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "getStorageProgramsByOwner",
+        data: {
+            owner: "demos1abc...",
+            requesterAddress: demos.getAddress(),  // optional
+            limit: 50,    // default 100, clamped to [1, 200]
+            offset: 0,    // default 0
+        },
+        muid: `storage-${Date.now()}`,
+    }],
+})
+
+const programs = res.response as Array<{
+    storageAddress: string
+    programName: string
+    encoding: "json" | "binary"
+    sizeBytes: number
+    storageLocation: string
+    createdAt: string
+    updatedAt: string
+}>  // StorageProgramListItem[]
+```
+
+The response is always an array — never `null`. Items are `StorageProgramListItem`, the lighter shape (no `data`, no `metadata`, no `owner` — `owner` is implied because you queried for it).
+
+<Warning>
+The default `limit` is 100 today and is documented to drop in a future release. Pass an explicit `limit` if you depend on a particular page size.
+</Warning>
+
+### 4. `getStorageProgramFields` — top-level field names
+
+JSON-only. Returns the keys of the top-level object.
+
+```typescript
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "getStorageProgramFields",
+        data: { storageAddress: "stor-7a8b9c...", requesterAddress: demos.getAddress() },
+        muid: `storage-${Date.now()}`,
+    }],
+})
+
+const { fields, count } = res.response as { fields: string[]; count: number }
+// { fields: ["displayName", "stats", "posts"], count: 3 }
+```
+
+This matches the `StorageProgramFieldsResponse` interface exported from `@kynesyslabs/demosdk/storage`. Binary-encoded programs return `400 / INVALID_FIELD_TYPE`.
+
+### 5. `getStorageProgramFieldType` — JSON type of a single field
+
+JSON-only. Returns one of `"string" | "number" | "boolean" | "array" | "object" | "null" | "undefined"` (`StorageFieldType`).
+
+```typescript
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "getStorageProgramFieldType",
+        data: {
+            storageAddress: "stor-7a8b9c...",
+            field: "posts",
+            requesterAddress: demos.getAddress(),
+        },
+        muid: `storage-${Date.now()}`,
+    }],
+})
+
+const { field, type } = res.response as { field: string; type: StorageFieldType }
+// { field: "posts", type: "array" }
+```
+
+Field-not-found returns `404 / FIELD_NOT_FOUND`.
+
+### 6. `getStorageProgramValue` — single field value
+
+JSON-only. Returns the field's value plus its inferred JSON type.
+
+```typescript
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "getStorageProgramValue",
+        data: {
+            storageAddress: "stor-7a8b9c...",
+            field: "displayName",
+            requesterAddress: demos.getAddress(),
+        },
+        muid: `storage-${Date.now()}`,
+    }],
+})
+
+const { field, value, type } = res.response as {
+    field: string
+    value: unknown
+    type: StorageFieldType
+}
+```
+
+This is the closest equivalent to "read a single key" — but be explicit about it. There is no `demos.storagePrograms.read(address, key)` overload.
+
+### 7. `getStorageProgramItem` — array element by index
+
+JSON-only. Supports negative indexing (`-1` is the last item).
+
+```typescript
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "getStorageProgramItem",
+        data: {
+            storageAddress: "stor-7a8b9c...",
+            field: "posts",
+            index: -1,  // negative indexing supported
+            requesterAddress: demos.getAddress(),
+        },
+        muid: `storage-${Date.now()}`,
+    }],
+})
+
+const { field, index, value, arrayLength } = res.response as {
+    field: string
+    index: number      // resolved (non-negative) index actually used
+    value: unknown
+    arrayLength: number
+}
+```
+
+Out-of-bounds returns `400 / INDEX_OUT_OF_BOUNDS`. Field exists but is not an array returns `400 / INVALID_FIELD_TYPE`.
+
+### 8. `hasStorageProgramField` — existence check
+
+JSON-only. For binary or non-object data the node returns `exists: false` rather than an error — it treats non-object data as having no fields.
+
+```typescript
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "hasStorageProgramField",
+        data: {
+            storageAddress: "stor-7a8b9c...",
+            field: "apiKey",
+            requesterAddress: demos.getAddress(),
+        },
+        muid: `storage-${Date.now()}`,
+    }],
+})
+
+const { field, exists } = res.response as { field: string; exists: boolean }
+```
+
+Use this instead of `getStorageProgramValue` when you only need to know whether a field is present — it never throws on missing fields.
+
+### 9. `searchStoragePrograms` — name search with ACL
+
+Partial match by default. ACL is filtered at the SQL layer, so anonymous callers transparently see only public programs and paginated results are full pages (no post-fetch JS filter that would silently shorten them).
+
+```typescript
+const res = await demos.rpcCall({
+    method: "nodeCall",
+    params: [{
+        message: "searchStoragePrograms",
+        data: {
+            query: "config",
+            options: {
+                exactMatch: false,  // default false — partial match
+                limit: 25,          // default 100, clamped to [1, 200]
+                offset: 0,          // default 0
+            },
+            requesterAddress: demos.getAddress(),  // optional
+        },
+        muid: `storage-${Date.now()}`,
+    }],
+})
+
+const programs = res.response as StorageProgramListItem[]
+```
+
+Response is always an array. Items are the `StorageProgramListItem` shape.
+
+## Higher-level convenience: `StorageProgram` static helpers
+
+If you'd rather not assemble `nodeCall` envelopes yourself, the `StorageProgram` class exposes a parallel set of static `async` query methods that wrap the same RPC endpoints. They take an `rpcUrl` directly and return strongly-typed responses (or `null` on error). See [API Reference](./api-reference) for the full list — `StorageProgram.getByAddress`, `getByOwner`, `searchByName`, `getFields`, `getValue`, `getItem`, `hasField`, `getFieldType`, `getAll`.
+
+```typescript
+import { StorageProgram } from "@kynesyslabs/demosdk/storage"
+
+const programs = await StorageProgram.getByOwner(
+    "https://node2.demos.sh",
+    "demos1abc...",
+    demos.getAddress(),  // identity for ACL
 )
-
-results.forEach((result, index) => {
-  console.log(`Storage ${index}:`, result.data.variables)
-})
-
-// ❌ BAD: Sequential queries (slow)
-for (const addr of addresses) {
-  const result = await demos.storageProgram.read(addr)
-  console.log(result)
-}
 ```
 
-**Performance Gain**:
-- Sequential: 3 queries × 100ms = 300ms
-- Parallel: max(100ms, 100ms, 100ms) = 100ms
-- **3× faster**
+These helpers do not need a connected `Demos` instance — just an RPC URL — which makes them convenient for read-only/server-side code.
 
-### Selective Key Reading
+## Performance & batching
 
-Only read the keys you need:
+Reads are RPC-only: no transaction, no fee, no consensus round-trip. Typical latency is sub-100 ms against a healthy node.
 
-```typescript
-// ❌ BAD: Read everything when you only need username
-const result = await demos.storageProgram.read(storageAddress)
-const username = result.data.variables.username
-
-// ✅ GOOD: Read only what you need
-const username = await demos.storageProgram.read(storageAddress, 'username')
-```
-
-**Benefits**:
-- Reduced bandwidth
-- Faster response (less data transferred)
-- Lower memory usage client-side
-
-### Caching Strategies
-
-#### Simple In-Memory Cache
+### Parallelize independent reads
 
 ```typescript
-class StorageCachemanager {
-  private cache: Map<string, { data: any; timestamp: number }> = new Map()
-  private TTL = 60000 // 1 minute
-
-  async read(storageAddress: string, key?: string) {
-    const cacheKey = `${storageAddress}:${key || 'all'}`
-    const cached = this.cache.get(cacheKey)
-
-    // Return cached if still valid
-    if (cached && Date.now() - cached.timestamp < this.TTL) {
-      return cached.data
-    }
-
-    // Fetch fresh data
-    const data = await demos.storageProgram.read(storageAddress, key)
-
-    // Update cache
-    this.cache.set(cacheKey, {
-      data: data,
-      timestamp: Date.now()
-    })
-
-    return data
-  }
-
-  invalidate(storageAddress: string, key?: string) {
-    if (key) {
-      this.cache.delete(`${storageAddress}:${key}`)
-    } else {
-      // Invalidate all keys for this storage
-      for (const cacheKey of this.cache.keys()) {
-        if (cacheKey.startsWith(`${storageAddress}:`)) {
-          this.cache.delete(cacheKey)
-        }
-      }
-    }
-  }
-}
-
-// Usage
-const cache = new StorageCacheManager()
-
-// Read with caching
-const data = await cache.read(storageAddress)
-
-// After writing, invalidate cache
-await demos.storageProgram.write(storageAddress, updates)
-cache.invalidate(storageAddress)
-```
-
-#### Cache with Metadata Tracking
-
-```typescript
-class SmartStorageCache {
-  private cache: Map<string, any> = new Map()
-  private metadataCache: Map<string, any> = new Map()
-
-  async read(storageAddress: string, key?: string) {
-    const cacheKey = `${storageAddress}:${key || 'all'}`
-
-    // Check if we have cached metadata
-    const cachedMetadata = this.metadataCache.get(storageAddress)
-
-    if (cachedMetadata) {
-      // Fetch latest metadata to check lastModified
-      const latestData = await demos.storageProgram.read(storageAddress)
-      const latestMetadata = latestData.data.metadata
-
-      // If not modified, return cached data
-      if (cachedMetadata.lastModified === latestMetadata.lastModified) {
-        const cached = this.cache.get(cacheKey)
-        if (cached) return cached
-      }
-
-      // Data was modified, update metadata cache
-      this.metadataCache.set(storageAddress, latestMetadata)
-    }
-
-    // Fetch and cache
-    const data = key
-      ? await demos.storageProgram.read(storageAddress, key)
-      : await demos.storageProgram.read(storageAddress)
-
-    this.cache.set(cacheKey, data)
-
-    if (!key) {
-      this.metadataCache.set(storageAddress, data.data.metadata)
-    }
-
-    return data
-  }
-}
-```
-
-## Query Patterns
-
-### Polling for Updates
-
-```typescript
-async function pollForUpdates(
-  storageAddress: string,
-  interval: number = 5000
-) {
-  let lastModified = 0
-
-  setInterval(async () => {
-    try {
-      const data = await demos.storageProgram.read(storageAddress)
-      const currentModified = data.data.metadata.lastModified
-
-      if (currentModified > lastModified) {
-        console.log('Storage updated:', data.data.variables)
-        lastModified = currentModified
-
-        // Trigger update handler
-        onStorageUpdate(data.data.variables)
-      }
-    } catch (error) {
-      console.error('Poll error:', error)
-    }
-  }, interval)
-}
-
-// Usage
-pollForUpdates(storageAddress, 10000) // Poll every 10 seconds
-```
-
-### Conditional Reading
-
-```typescript
-async function readIfChanged(
-  storageAddress: string,
-  lastKnownModified: number
-): Promise<any | null> {
-  const data = await demos.storageProgram.read(storageAddress)
-  const currentModified = data.data.metadata.lastModified
-
-  if (currentModified > lastKnownModified) {
-    return data.data.variables
-  }
-
-  return null // No changes
-}
-
-// Usage
-let lastModified = 0
-const updates = await readIfChanged(storageAddress, lastModified)
-
-if (updates) {
-  console.log('New data:', updates)
-  lastModified = Date.now()
-}
-```
-
-### Pagination Pattern
-
-For large datasets stored in arrays:
-
-```typescript
-async function getPaginatedPosts(
-  storageAddress: string,
-  page: number = 1,
-  pageSize: number = 10
-) {
-  // Read all posts
-  const posts = await demos.storageProgram.read(storageAddress, 'posts')
-
-  // Calculate pagination
-  const startIndex = (page - 1) * pageSize
-  const endIndex = startIndex + pageSize
-
-  // Return paginated slice
-  return {
-    data: posts.slice(startIndex, endIndex),
-    page: page,
-    pageSize: pageSize,
-    total: posts.length,
-    totalPages: Math.ceil(posts.length / pageSize)
-  }
-}
-
-// Usage
-const page1 = await getPaginatedPosts(storageAddress, 1, 20)
-console.log('Posts 1-20:', page1.data)
-console.log('Total pages:', page1.totalPages)
-```
-
-## Access Control and Queries
-
-### Public Queries (No Auth)
-
-```typescript
-// Public storage - anyone can query
-const result = await demos.storageProgram.read(publicStorageAddress)
-console.log('Public data:', result.data.variables)
-
-// No authentication needed
-```
-
-### Private Queries (Auth Required)
-
-```typescript
-// Private storage - must authenticate
-const demos = new DemosClient({
-  rpcUrl: 'https://rpc.demos.network',
-  privateKey: process.env.PRIVATE_KEY // Your private key
-})
-
-// Only works if you're the deployer
-try {
-  const result = await demos.storageProgram.read(privateStorageAddress)
-  console.log('Private data:', result.data.variables)
-} catch (error) {
-  console.error('Access denied')
-}
-```
-
-### Restricted Queries
-
-```typescript
-// Restricted storage - check if you're allowed
-const demos = new DemosClient({
-  rpcUrl: 'https://rpc.demos.network',
-  privateKey: process.env.PRIVATE_KEY
-})
-
-const myAddress = await demos.getAddress()
-
-try {
-  const result = await demos.storageProgram.read(restrictedStorageAddress)
-
-  // Verify you're in the allowed list
-  const allowedAddresses = result.data.metadata.allowedAddresses
-  if (!allowedAddresses.includes(myAddress) &&
-      result.data.metadata.deployer !== myAddress) {
-    console.warn('You may not have been granted access')
-  }
-
-  console.log('Data:', result.data.variables)
-} catch (error) {
-  console.error('Access denied')
-}
-```
-
-## Error Handling
-
-### Robust Query Pattern
-
-```typescript
-async function safeRead(
-  storageAddress: string,
-  key?: string,
-  retries: number = 3
-): Promise<any | null> {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const result = await demos.storageProgram.read(storageAddress, key)
-      return key ? result : result.data
-    } catch (error: any) {
-      // Handle specific errors
-      if (error.code === 404) {
-        console.error('Storage program not found')
-        return null
-      }
-
-      if (error.code === 403) {
-        console.error('Access denied')
-        return null
-      }
-
-      // Network errors - retry
-      if (attempt < retries) {
-        console.warn(`Attempt ${attempt} failed, retrying...`)
-        await sleep(1000 * attempt) // Exponential backoff
-        continue
-      }
-
-      // All retries failed
-      console.error('Query failed after retries:', error.message)
-      return null
-    }
-  }
-
-  return null
-}
-
-// Usage
-const data = await safeRead(storageAddress, 'username', 3)
-if (data) {
-  console.log('Username:', data)
-}
-```
-
-### Handling Non-Existent Keys
-
-```typescript
-async function readWithDefault<T>(
-  storageAddress: string,
-  key: string,
-  defaultValue: T
-): Promise<T> {
-  try {
-    const value = await demos.storageProgram.read(storageAddress, key)
-    return value !== undefined ? value : defaultValue
-  } catch (error) {
-    return defaultValue
-  }
-}
-
-// Usage
-const theme = await readWithDefault(storageAddress, 'theme', 'light')
-const count = await readWithDefault(storageAddress, 'count', 0)
-```
-
-## Advanced Patterns
-
-### Query Aggregation
-
-Aggregate data from multiple storage programs:
-
-```typescript
-async function aggregateUserStats(userAddresses: string[]) {
-  const userStorageAddresses = userAddresses.map(addr =>
-    deriveStorageAddress(addr, "userProfile")
-  )
-
-  const results = await Promise.all(
-    userStorageAddresses.map(async addr => {
-      try {
-        return await demos.storageProgram.read(addr)
-      } catch (error) {
-        return null
-      }
-    })
-  )
-
-  // Aggregate stats
-  const stats = {
-    totalUsers: results.filter(r => r !== null).length,
-    activeUsers: results.filter(r =>
-      r && r.data.variables.lastActive > Date.now() - 86400000
-    ).length,
-    averageScore: results
-      .filter(r => r !== null)
-      .reduce((sum, r) => sum + (r.data.variables.score || 0), 0) /
-      results.filter(r => r !== null).length
-  }
-
-  return stats
-}
-```
-
-### Query Filtering
-
-Client-side filtering for complex queries:
-
-```typescript
-async function queryUsers(
-  storageAddress: string,
-  filter: {
-    minScore?: number
-    country?: string
-    verified?: boolean
-  }
-) {
-  const data = await demos.storageProgram.read(storageAddress, 'users')
-
-  return data.filter((user: any) => {
-    if (filter.minScore && user.score < filter.minScore) return false
-    if (filter.country && user.country !== filter.country) return false
-    if (filter.verified !== undefined && user.verified !== filter.verified) return false
-    return true
-  })
-}
-
-// Usage
-const highScoreUsers = await queryUsers(storageAddress, {
-  minScore: 1000,
-  verified: true
-})
-```
-
-### Subscription Pattern (WebSocket-like)
-
-Simulate subscriptions using polling:
-
-```typescript
-class StorageSubscription {
-  private pollInterval: NodeJS.Timeout | null = null
-  private lastModified: number = 0
-
-  subscribe(
-    storageAddress: string,
-    callback: (data: any) => void,
-    interval: number = 5000
-  ) {
-    this.pollInterval = setInterval(async () => {
-      try {
-        const result = await demos.storageProgram.read(storageAddress)
-        const currentModified = result.data.metadata.lastModified
-
-        if (currentModified > this.lastModified) {
-          this.lastModified = currentModified
-          callback(result.data.variables)
-        }
-      } catch (error) {
-        console.error('Subscription error:', error)
-      }
-    }, interval)
-  }
-
-  unsubscribe() {
-    if (this.pollInterval) {
-      clearInterval(this.pollInterval)
-      this.pollInterval = null
-    }
-  }
-}
-
-// Usage
-const subscription = new StorageSubscription()
-
-subscription.subscribe(
-  storageAddress,
-  (data) => {
-    console.log('Storage updated:', data)
-    // Update UI, trigger events, etc.
-  },
-  10000 // Poll every 10 seconds
-)
-
-// Later: unsubscribe
-subscription.unsubscribe()
-```
-
-## Performance Benchmarks
-
-### Query Response Times
-
-Typical response times for RPC queries:
-
-| Operation | Response Time | Bandwidth |
-|-----------|---------------|-----------|
-| Read metadata only | 20-50ms | ~1KB |
-| Read single key | 30-80ms | Varies |
-| Read all data (small, less than 1KB) | 40-100ms | ~1-2KB |
-| Read all data (medium ~10KB) | 60-150ms | ~10-12KB |
-| Read all data (large ~100KB) | 100-300ms | ~100-102KB |
-
-### Optimization Impact
-
-| Technique | Speed Improvement | Use Case |
-|-----------|-------------------|----------|
-| Selective key reading | 2-3× faster | When you need specific fields |
-| Parallel queries | 3-10× faster | Multiple storage programs |
-| Client-side caching | 100-1000× faster | Frequently accessed data |
-| Metadata-based caching | 10-50× faster | Change detection |
-
-## Best Practices
-
-### 1. Read Only What You Need
-
-```typescript
-// ✅ GOOD
-const username = await demos.storageProgram.read(addr, 'username')
-
-// ❌ BAD
-const all = await demos.storageProgram.read(addr)
-const username = all.data.variables.username
-```
-
-### 2. Use Parallel Queries
-
-```typescript
-// ✅ GOOD
-const [user, settings, stats] = await Promise.all([
-  demos.storageProgram.read(addr, 'user'),
-  demos.storageProgram.read(addr, 'settings'),
-  demos.storageProgram.read(addr, 'stats')
+const [profile, settings, posts] = await Promise.all([
+    demos.storagePrograms.read(profileAddress),
+    demos.storagePrograms.read(settingsAddress),
+    demos.storagePrograms.read(postsAddress),
 ])
-
-// ❌ BAD
-const user = await demos.storageProgram.read(addr, 'user')
-const settings = await demos.storageProgram.read(addr, 'settings')
-const stats = await demos.storageProgram.read(addr, 'stats')
 ```
 
-### 3. Implement Caching
+### Use `updatedAt` as a staleness signal
+
+`StorageProgramResponse.updatedAt` is the canonical "did anything change?" field — it's an ISO 8601 timestamp set on every successful write. Cache aggressively against it rather than polling the full document:
 
 ```typescript
-// ✅ GOOD: Cache frequently accessed data
-const cache = new Map()
+let cached: StorageProgramResponse | null = null
 
-async function getCachedData(addr: string) {
-  if (cache.has(addr)) return cache.get(addr)
-
-  const data = await demos.storageProgram.read(addr)
-  cache.set(addr, data)
-  setTimeout(() => cache.delete(addr), 60000) // 1 min TTL
-
-  return data
+async function readIfChanged(address: string) {
+    const head = await demos.storagePrograms.read(address)
+    if (!head.success) return cached
+    if (cached?.updatedAt === head.updatedAt) return cached
+    cached = head
+    return head
 }
 ```
 
-### 4. Handle Errors Gracefully
+There is no metadata-only HEAD endpoint today, so the cheapest "did it change?" probe is still `read(address)` and a comparison against your cached `updatedAt`.
 
-```typescript
-// ✅ GOOD
-try {
-  const data = await demos.storageProgram.read(addr)
-  return data
-} catch (error) {
-  console.error('Read failed:', error.message)
-  return null // or default value
-}
-```
+### Field-level reads avoid full-document transfer
 
-### 5. Monitor Query Performance
+When you only need one key out of a 500 KB program, use `getStorageProgramValue` (or `StorageProgram.getValue`) instead of `read` — the node serializes only the requested field, not the whole document.
 
-```typescript
-async function timedRead(addr: string, key?: string) {
-  const start = Date.now()
+## Error handling
 
-  try {
-    const result = await demos.storageProgram.read(addr, key)
-    const duration = Date.now() - start
+| Surface | How it shows up |
+| --- | --- |
+| Program not found / soft-deleted | `success: false` (or `result.response === null` over `rpcCall`) |
+| ACL denial | `success: false` with an `errorCode` |
+| Wrong encoding for a JSON-only endpoint | `400 / INVALID_FIELD_TYPE` |
+| Field missing | `404 / FIELD_NOT_FOUND` |
+| Array index out of bounds | `400 / INDEX_OUT_OF_BOUNDS` |
+| Bad params | `400` with `error` describing the missing/invalid field |
+| Server error | `500 / INTERNAL_ERROR` |
 
-    console.log(`Query took ${duration}ms`)
+The SDK helpers (`storagePrograms.read`, `StorageProgram.getByAddress`, etc.) never throw on these — they return a structured response (or `null`). For full payload details on individual error codes, see node docs.
 
-    if (duration > 1000) {
-      console.warn('Slow query detected')
-    }
+## See also
 
-    return result
-  } catch (error) {
-    const duration = Date.now() - start
-    console.error(`Query failed after ${duration}ms:`, error)
-    throw error
-  }
-}
-```
-
-## Next Steps
-
-- [Examples](../cookbook/storage-programs/examples) - Real-world query patterns and use cases
-- [API Reference](./api-reference) - Complete API documentation
-- [Operations Guide](./operations) - Learn about write operations
+- [Getting Started](./getting-started) — create / write / read flow end-to-end
+- [Operations](./operations) — write-side surface (granular updates, deletes, ACL changes)
+- [Access Control](./access-control) — how `owner` / `public` / `restricted` modes interact with read ACL
+- [API Reference](./api-reference) — every static helper, payload, and response interface
+- [Cookbook](/sdk/cookbook/storage-programs/examples) — end-to-end recipes
