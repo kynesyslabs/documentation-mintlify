@@ -108,8 +108,10 @@ import {
     BroadcastTimeoutError,
     BroadcastFailedError,
     TransportError,
-    SubDemPrecisionError,
 } from "@kynesyslabs/demosdk/websdk"
+import { denomination } from "@kynesyslabs/demosdk"
+// SubDemPrecisionError lives in the denomination namespace:
+// denomination.SubDemPrecisionError
 
 try {
     const result = await demos.broadcastAndWait(validityData, { timeoutMs: 10_000 })

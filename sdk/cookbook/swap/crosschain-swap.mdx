@@ -1,41 +1,56 @@
 ---
 title: "Crosschain Swap"
-description: "After connecting the wallet you need to create a Rubic Service instance"
+description: "Swap tokens between chains using the SDK's RubicBridge integration."
 icon: "arrows-turn-to-dots"
 ---
+
 # Crosschain SWAP
 
-## How to SWAP from one chain to another chain
+`RubicBridge` is a thin SDK client for the node-side Rubic bridge integration. It exposes two methods — `getTrade` for quoting a swap, and `executeTrade` for committing it — both of which proxy through the connected DEMOS RPC.
+
+## How to SWAP from one chain to another
 
 ### 1. Connect to the network
 
 ```ts
-import { Demos } from "@kynesyslabs/demosdk/websdk"
-import RubicService from "@/features/bridges/rubic"
-import { WrappedCrossChainTrade } from "rubic-sdk"
-import { BridgeTradePayload, SupportedChains } from "@kynesyslabs/demosdk/types"
+import { Demos, RubicBridge } from "@kynesyslabs/demosdk/websdk"
+import {
+    BridgeTradePayload,
+    SupportedChains,
+} from "@kynesyslabs/demosdk/bridge"
 
-// Connect to the network
-const rpc = "https://node2.demos.sh";
-const demos = new Demos();
-await demos.connect(rpc);
-await demos.connectWallet(mnemonic);
+const rpc = "https://node2.demos.sh"
+const demos = new Demos()
+await demos.connect(rpc)
+await demos.connectWallet(mnemonic)
 ```
 
-### 2. Creating the RubicService instance
+### 2. Create a `RubicBridge` instance
 
-After connecting the wallet you need to create a Rubic Service instance
+`RubicBridge` is stateless — there are no constructor arguments. The chain and payload are passed per call.
 
 ```ts
-const address = await demos.getEd25519Address()
-const rubicService = new RubicService(address, SupportedChains.POLYGON);
+const bridge = new RubicBridge()
 ```
 
-As you can see here used `SupportedChains.POLYGON`.
-Need to use that chain from which you want to swap tokens.
-In this case used Polygon, because we wanted to swap from the Polygon chain to Ethereum.
+### 3. Build the trade payload
 
-Here are the supported chains.
+`BridgeTradePayload.amount` and the chain IDs refer to the **source chain's** native units, **not** Demos OS. For example, an EVM swap of 10 USDT uses `amount: 10` because Rubic itself handles the on-chain decimal conversion.
+
+```ts
+// Swap 10 USDT from Polygon (chain 137) to Ethereum (chain 1).
+const payload: BridgeTradePayload = {
+    fromToken: "USDT",
+    toToken: "USDT",
+    amount: 10,
+    fromChainId: 137,
+    toChainId: 1,
+}
+```
+
+Valid `fromToken` / `toToken` values are `"NATIVE"`, `"USDC"`, and `"USDT"`. `"NATIVE"` refers to the source chain's native token (e.g. ETH on Ethereum, MATIC on Polygon) — **not** Demos `DEM`.
+
+`SupportedChains` is exported as a string-valued object with these keys:
 
 ```ts
 export const SupportedChains = {
@@ -51,42 +66,40 @@ export const SupportedChains = {
 }
 ```
 
-### 3. Creating the payload to get trade data
+The first argument to `getTrade` / `executeTrade` is the **source chain key** (`SupportedChains.POLYGON` in this example).
 
-Provided payload for swapping 10 USDT from the Polygon chain to the Ethereum chain
-
-```ts
-const payload: BridgeTradePayload = {
-                fromToken: "USDT",
-                toToken: "USDT",
-                amount: 10,
-                fromChainId: 137,
-                toChainId: 1,
-            }
-```
-
-### 4. Get trade data
-
-After creating the payload, need to call the `getTrade` method
+### 4. Quote the trade
 
 ```ts
-const trade = await rubicService.getTrade(payload);
+const trade = await bridge.getTrade(
+    demos,
+    SupportedChains.POLYGON,
+    payload,
+)
 ```
 
-### 5. Execute trade method
+`getTrade` returns the standard `RPCResponse`. Inspect `trade.response` for the quoted route and pricing before committing.
 
-After successfully getting the trade data, we already can do a swap by calling the `executeTrade` method
+### 5. Execute the trade
+
+If the quote looks good, commit the swap with `executeTrade`. The same `payload` is passed — there is no separate "trade object" to forward.
 
 ```ts
-const receipt = await rubicService.executeTrade(trade);
+const receipt = await bridge.executeTrade(
+    demos,
+    SupportedChains.POLYGON,
+    payload,
+)
 ```
 
-The result of the `executeTrade` method will be the receipt of that swap transaction
-
-e.g.
+The result wraps the source-chain transaction hash, e.g.
 
 ```ts
 "0x2342692074a7484f3ac9713d36cd23fdc1c51810d03639e5cf651bfefb62fdc3"
 ```
 
 [PolygonScan](https://polygonscan.com/tx/0x2342692074a7484f3ac9713d36cd23fdc1c51810d03639e5cf651bfefb62fdc3)
+
+<Info>
+For local development against an unfunded source chain, `RubicBridge.executeMockTrade(demos, chain, wrappedTrade)` accepts a `WrappedCrossChainTrade` (from `rubic-sdk`) and exercises the same RPC path without broadcasting on the foreign chain.
+</Info>

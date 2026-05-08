@@ -14,8 +14,8 @@ There are two ways to go about creating a conditional operation.
 #### 1. Using the `if`, `then` and `else` methods
 
 ```ts
-import { EVM } from "@kynesyslabs/demosdk/multichain/websdk"
-import { prepareXMScript } from "@kynesyslabs/demosdk/websdk/XMTransactions"
+import { EVM } from "@kynesyslabs/demosdk/xm-websdk"
+import { prepareXMScript } from "@kynesyslabs/demosdk/websdk"
 import {
     DemosWork,
     prepareWeb2Step,
@@ -91,8 +91,8 @@ The `value_a` and `value_b` fields can accept any of the following:
 You can create the same conditional operation as the previous example using the `Condition` class as follows:
 
 ```ts
-import { EVM } from "@kynesyslabs/demosdk/multichain/websdk"
-import { prepareXMScript } from "@kynesyslabs/demosdk/websdk/XMTransactions"
+import { EVM } from "@kynesyslabs/demosdk/xm-websdk"
+import { prepareXMScript } from "@kynesyslabs/demosdk/websdk"
 import {
     Condition,
     DemosWork,
@@ -134,7 +134,9 @@ const checkIsMember = new Condition({
     action: releaseFunds,
 })
 
-// Fallback condition (else)
+// Fallback condition — the all-null shape mirrors what
+// ConditionalOperation.else() produces internally: a default branch
+// that runs when no preceding condition matches.
 const notMember = new Condition({
     value_a: null,
     operator: null,

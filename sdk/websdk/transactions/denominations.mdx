@@ -27,7 +27,8 @@ The OS denomination ships behind the **`osDenomination` fork**. Pre-fork nodes a
 - **`number`** (legacy, deprecated) — the amount in whole DEM, auto-converted to OS internally
 
 ```typescript
-import { Demos, denomination } from "@kynesyslabs/demosdk/websdk"
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { denomination } from "@kynesyslabs/demosdk"
 
 const demos = new Demos()
 await demos.connect("https://node2.demos.sh")
@@ -62,7 +63,7 @@ The SDK exposes a small set of helpers under `denomination`:
 | `OS_DECIMALS` | Constant `9`. |
 
 ```typescript
-import { denomination } from "@kynesyslabs/demosdk/websdk"
+import { denomination } from "@kynesyslabs/demosdk"
 
 const os = denomination.demToOs("1.500000001")  // 1500000001n
 const back = denomination.osToDem(os)           // "1.500000001"
@@ -101,7 +102,8 @@ You don't normally need to call `getNetworkInfo()` yourself — `transfer`/`pay`
 When the connected node is **pre-fork** and your code submits a `bigint` OS amount that carries sub-DEM precision (i.e. `amount % OS_PER_DEM !== 0n`), the SDK refuses to sign the transaction and throws `SubDemPrecisionError` instead. This prevents silent truncation on the legacy DEM-`number` wire.
 
 ```typescript
-import { Demos, denomination, SubDemPrecisionError } from "@kynesyslabs/demosdk/websdk"
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { denomination } from "@kynesyslabs/demosdk"
 
 const demos = new Demos()
 await demos.connect(rpc)
@@ -111,7 +113,7 @@ try {
     // 1.5 DEM = 1_500_000_000n OS — half a DEM is sub-DEM precision
     await demos.pay("0x...", 1_500_000_000n)
 } catch (err) {
-    if (err instanceof SubDemPrecisionError) {
+    if (err instanceof denomination.SubDemPrecisionError) {
         console.warn(
             `Cannot send sub-DEM amount on a pre-fork node. ` +
             `OS amount: ${err.amountOs}, sub-DEM remainder: ${err.subDemRemainderOs}`,

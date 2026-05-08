@@ -11,7 +11,7 @@ You can send DEM using the Demos sdk as shown below:
 ### 1. Connect to the network
 
 ```javascript
-import { Demos } from "@/websdk"
+import { Demos } from "@kynesyslabs/demosdk/websdk"
 
 // Connect to the network
 const rpc = "https://node2.demos.sh"
@@ -28,7 +28,7 @@ await demos.connectWallet(mnemonic)
 You can now create a transaction by passing the address and the amount to `demos.transfer`. The amount can be either a `bigint` in **OS** (preferred, full precision; `1 DEM = 10^9 OS`) or a legacy `number` in whole **DEM** (deprecated, removed in v4).
 
 ```typescript
-import { denomination } from "@kynesyslabs/demosdk/websdk"
+import { denomination } from "@kynesyslabs/demosdk"
 
 // 2a. Preferred — bigint OS via the denomination helper
 const tx = await demos.transfer(

@@ -9,13 +9,15 @@ icon: "circle-3"
 To convert a Demoswork object to a transaction, use the `prepareDemosWorkPayload` function.
 
 ```ts
+import { Demos } from "@kynesyslabs/demosdk/websdk"
 import { prepareDemosWorkPayload } from "@kynesyslabs/demosdk/demoswork"
 
 const demos = new Demos()
 await demos.connect("https://node2.demos.sh")
 await demos.connectWallet(mnemonic)
 
-// Creating a transaction
+// `work` is the DemosWork object built in the previous steps
+// (see "Creating Work Steps", "Conditional Operation", or "Base Operation").
 const tx = await prepareDemosWorkPayload(work, demos)
 ```
 
@@ -30,6 +32,13 @@ const validityData = await demos.confirm(tx)
 // Broadcasting the transaction
 const res = await demos.broadcast(validityData)
 console.log("res:", res)
+```
+
+If you need a deterministic confirmation that the work transaction landed on chain, use [`broadcastAndWait`](/sdk/websdk/transactions/broadcasting-a-transaction#broadcast-and-wait-for-inclusion) instead — it broadcasts and then polls until the transaction reaches a terminal `included` or `failed` state.
+
+```ts
+const { broadcast, status } = await demos.broadcastAndWait(validityData)
+console.log("status:", status.state, "block:", status.blockNumber)
 ```
 
 

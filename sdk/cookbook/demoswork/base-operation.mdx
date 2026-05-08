@@ -9,16 +9,16 @@ icon: "circle-2"
 The base operation allow you to group work steps and operations for execution without any additional logic.
 
 ```ts
-import { BaseOperation, prepareXMStep } from "@kynesyslabs/demosdk/demoswork"
+import {
+    BaseOperation,
+    DemosWork,
+    prepareXMStep,
+} from "@kynesyslabs/demosdk/demoswork"
 
-// Work steps
-const sendEth = prepareXMStep({
-    // XMScript here
-})
-
-const sendSol = prepareXMStep({
-    // XMScript here
-})
+// Work steps — pass a fully-formed XMScript to prepareXMStep.
+// See "Creating Work Steps" for how to build sendEth / sendSol.
+const sendEth = prepareXMStep(ethXmScript)
+const sendSol = prepareXMStep(solXmScript)
 
 // Base operation
 const base = new BaseOperation()
@@ -26,7 +26,6 @@ base.addWork(sendEth, sendSol)
 
 const work = new DemosWork()
 work.push(base)
-
 ```
 
 Work steps are created and added to the base operation using the `addWork` method.
