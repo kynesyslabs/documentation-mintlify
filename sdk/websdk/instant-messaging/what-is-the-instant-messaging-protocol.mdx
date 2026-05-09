@@ -1,18 +1,34 @@
 ---
 title: "What Is The Instant Messaging Protocol"
-description: "The Instant Messaging Protocol is a robust, secure, and flexible framework for building peer-to-peer messaging applications. It provides a complete so..."
+description: "An L2PS-backed, end-to-end encrypted messaging protocol with persistence, history, and offline delivery — plus a legacy signaling-only path for transient relay."
 icon: "circle-question"
 ---
+
 # What is the Instant Messaging Protocol?
 
-The Instant Messaging Protocol is a robust, secure, and flexible framework for building peer-to-peer messaging applications. It provides a complete solution for establishing connections, discovering peers, exchanging messages, and maintaining conversations through the signaling server included with every Demos node.
+The Instant Messaging Protocol on Demos has two layers, both reachable through the `instantMessaging` namespace exported by `@kynesyslabs/demosdk`.
 
-#### Key Features
+## L2PSMessagingPeer (primary)
 
-* Secure Communication: End-to-end encryption using ml-kem-aes
-* Peer Discovery: Automatic discovery of available peers
-* Multi-Round Conversations: Support for back-and-forth conversations between peers and the server
-* Automatic Reconnection: Robust connection management with exponential backoff
-* Event-Based Architecture: Flexible event handling system
-* Promise-Based API: Clean, modern JavaScript/TypeScript interface
-* Blockchain Secured: Communications are attested onto the Demos Network at each block while preserving confidentiality
+`L2PSMessagingPeer` is a WebSocket client for the **L2PS messaging server** (default port `3006`). Messages are delivered instantly over the WebSocket and persisted through the L2PS pipeline:
+
+```
+client send → L2PS mempool → L2PS batch → L1 proof → L1 finality
+```
+
+This persistence is reflected in the `MessageStatus` values returned by the history API: `delivered`, `queued`, `sent`, `failed`, `l2ps_pending`, `l2ps_batched`, `l2ps_confirmed`.
+
+Key features:
+
+- **End-to-end encryption** using `ml-kem-aes` (ML-KEM-768 + AES-GCM). Encrypted payloads are wire-serialized as `SerializedEncryptedMessage` (`ciphertext` and `nonce` as base64, optional `ephemeralKey` hex).
+- **Registration with ed25519 proof.** The client signs `register:{publicKey}:{timestamp}` with the configured `signFn`; the server verifies it before accepting `register`, `history`, and other authenticated frames.
+- **L2PS network isolation** through the `l2psUid` config field — peers only see and exchange messages with peers in the same L2PS network.
+- **Conversation history with pagination** via `history(peerKey, { before, limit })`.
+- **Offline delivery.** When a recipient is offline, the server returns `message_queued` instead of `message_sent`; the message is delivered the next time the recipient connects.
+- **Delivery acknowledgement** through the `message_sent` / `message_queued` server frames returned for every `send()` call.
+- **Peer presence events** via `peer_joined` and `peer_left` notifications.
+- **Automatic reconnection** with exponential backoff (base 1000 ms, max 10 attempts, capped at 30 s), with automatic re-registration on reconnect.
+
+## MessagingPeer (legacy, signaling-only)
+
+`MessagingPeer` is the original WebSocket client for the **legacy signaling server** (default port `3005`). It performs peer registration, peer discovery, and per-message relaying through the signaling server, with the same `ml-kem-aes` encryption layer applied client-side. It does **not** persist messages, has **no** history API, **no** offline queue, and **no** server-side delivery acknowledgement. Use it only when you specifically need the signaling-server transport; otherwise prefer `L2PSMessagingPeer`.

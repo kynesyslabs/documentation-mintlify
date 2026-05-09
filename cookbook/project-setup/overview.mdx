@@ -6,3 +6,41 @@ icon: "folder-open"
 
 # Project setup
 
+There are two supported ways to run a Demos node. Both produce a working node — they differ only in where the binary and its dependencies live.
+
+| Track | Best for | What you install on the host |
+|-------|----------|------------------------------|
+| **Track 1: Docker Compose (recommended)** | Operators, validators, anyone who wants the fastest path to a running node | Just Docker (20.10+) and the `docker compose` v2 plugin |
+| **Track 2: Bare metal (`./run`)** | Core development, debugging, TUI-driven operation | Bun, Rust (for `wstcp`), plus Docker for the Postgres sidecar |
+
+If you don't have a strong reason to pick Track 2, use Track 1. The `docker compose up` workflow boots the full stack — node, Postgres, optional TLSNotary sidecar, and the Prometheus + Grafana monitoring stack — in a single command.
+
+## Quickstart (Docker Compose)
+
+On any platform with Docker and the v2 compose plugin:
+
+```bash
+git clone https://github.com/kynesyslabs/node.git && cd node
+cp .env.example .env
+docker compose up
+```
+
+When healthy:
+
+- Node RPC: <http://localhost:53550> (try `curl http://localhost:53550/info`)
+- Grafana: <http://localhost:3000> (default `admin` / `demos`)
+- Prometheus: <http://localhost:9091>
+
+## Platform guides
+
+Pick the guide that matches your machine. Each one walks Track 1 first and links to the canonical [`INSTALL.md`](https://github.com/kynesyslabs/node/blob/main/INSTALL.md) for the full Track 2 walkthrough.
+
+- [Run on macOS](/cookbook/project-setup/run-the-project-macos)
+- [Run on Ubuntu](/cookbook/project-setup/run-the-project-ubuntu)
+- [Run on Windows](/cookbook/project-setup/run-the-project-windows/overview)
+  - [WSL 2 setup](/cookbook/project-setup/run-the-project-windows/wsl-2-setup)
+  - [Issue troubleshooting](/cookbook/project-setup/run-the-project-windows/issue-troubleshooting)
+
+## Source of truth
+
+The platform guides are kept short on purpose. For the full reference — every env var, every profile, all bare-metal options — see [`INSTALL.md`](https://github.com/kynesyslabs/node/blob/main/INSTALL.md) in the node repository and the canonical [`.env.example`](https://github.com/kynesyslabs/node/blob/main/.env.example).

@@ -1,59 +1,151 @@
 ---
 title: "Quickstart"
-description: "Core Concepts"
+description: "Connect, send, receive, and read history with L2PSMessagingPeer."
 icon: "bolt"
 ---
-#### Quick Start Example
+
+# Quickstart
+
+This quickstart targets the production messaging client, `L2PSMessagingPeer` (default port `3006`). For the legacy signaling-server flow (`MessagingPeer`, port `3005`), see the section at the bottom.
+
+## 1. Install and import
 
 ```typescript
-import { instantMessaging } from "@kynesyslabs/demosdk"
-import { encryption } from "@kynesyslabs/demosdk";
+import { instantMessaging, encryption } from "@kynesyslabs/demosdk"
 
+const { L2PSMessagingPeer } = instantMessaging
 const unifiedCrypto = encryption.ucrypto
-
-async function setupMessenger() {
-    // Generate identities
-    /* NOTE: This part is not necessary when using a SDK instance 
-    that has already generated identities */
-    const masterSeed = crypto.randomBytes(128)
-    await unifiedCrypto.generateAllIdentities(masterSeed)
-    const mlKemAes = await unifiedCrypto.getIdentity("ml-kem-aes")
-    
-    // Create and connect peer
-    const peer = new instantMessaging.MessagingPeer({
-        serverUrl: "ws://your-signaling-server:3005",
-        clientId: "user-" + Date.now(),
-        publicKey: mlKemAes.publicKey,
-    })
-    
-    await peer.connect()
-    
-    // Set up message handler
-    peer.onMessage((message, fromId) => {
-        console.log(`Message from ${fromId}:`, message)
-    })
-    
-    // Discover available peers
-    const peers = await peer.discoverPeers()
-    console.log("Available peers:", peers)
-    
-    return peer
-}
-
-// Use the messenger
-const messenger = await setupMessenger()
 ```
 
-Core Concepts
+> The only canonical import path for both classes is the package root: `import { instantMessaging } from "@kynesyslabs/demosdk"`. There is **no** `@kynesyslabs/demosdk/instant_messaging` subpath.
 
-#### Connection Lifecycle
+## 2. Build a `signFn`
 
-1. Initialization: Create a MessagingPeer instance with configuration
-2. Connection: Connect to the signaling server
-3. Registration: Register with the server using your client ID and public key (**NOTE:** in this step, an automatic sign-verify mechanism is enforced to link signing and encryption keys for a specific handle)
-4. Discovery: Discover other available peers
-5. Communication: Exchange messages with other peers
-6. Disconnection: Disconnect from the server when done
+`L2PSMessagingPeer` registers and authenticates by signing short proof strings (`register:{publicKey}:{timestamp}`, `history:{peerKey}:{timestamp}`) with an ed25519 key. The constructor takes a `signFn` that you control — bring your own ed25519 signer.
 
+```typescript
+// Pseudocode — replace with your own ed25519 signer.
+// Must return a hex-encoded ed25519 signature of `message`.
+const signFn = async (message: string): Promise<string> => {
+    // e.g. delegate to your wallet, KMS, or a local @noble/curves signer
+    return await myEd25519.signHex(message)
+}
 
+const myEd25519PublicKeyHex = await myEd25519.getPublicKeyHex()
+```
 
+## 3. Connect
+
+```typescript
+const peer = new L2PSMessagingPeer({
+    serverUrl: "ws://your-demos-node:3006",
+    publicKey: myEd25519PublicKeyHex,
+    l2psUid: "your-l2ps-network-uid",
+    signFn,
+})
+
+const registered = await peer.connect()
+// registered: { success, publicKey, l2psUid, onlinePeers }
+console.log("Online peers in this L2PS network:", registered.onlinePeers)
+```
+
+`connect()` opens the WebSocket, sends the `register` frame with a fresh ed25519 proof, and resolves once the server replies with `registered`.
+
+## 4. Receive messages
+
+```typescript
+peer.onMessage(payload => {
+    // payload: { from, encrypted: SerializedEncryptedMessage, messageHash, offline? }
+    console.log("Got message from", payload.from, "offline?", payload.offline)
+    // Decrypt payload.encrypted with your ML-KEM private key here.
+})
+
+peer.onError(err => {
+    // err: { code: ErrorCode, message: string, details?: string }
+    console.error("L2PS error:", err.code, err.message)
+})
+
+peer.onPeerJoined(publicKey => console.log("peer joined:", publicKey))
+peer.onPeerLeft(publicKey => console.log("peer left:", publicKey))
+peer.onConnectionStateChange(state => console.log("state:", state))
+```
+
+## 5. Send a message
+
+`L2PSMessagingPeer.send` takes an already-encrypted payload (a `SerializedEncryptedMessage`) plus a `messageHash` for server-side dedup. You produce the encrypted payload with your ML-KEM-AES encryption layer and serialize it to the wire shape:
+
+```typescript
+import type { SerializedEncryptedMessage } from "@kynesyslabs/demosdk" // re-exported from instantMessaging
+
+// Minimal example — ciphertext and nonce are base64.
+const encrypted: SerializedEncryptedMessage = {
+    ciphertext: "<base64 ciphertext from your ml-kem-aes encrypt step>",
+    nonce: "<base64 AES-GCM nonce>",
+    // ephemeralKey: "<hex>" // only when using X25519 ephemeral DH
+}
+
+const messageHash = "<sha256 hex of plaintext or canonical envelope>"
+
+const result = await peer.send(recipientPublicKeyHex, encrypted, messageHash)
+// result is either:
+//   { messageHash, l2psStatus: "submitted" | "failed" }   // message_sent
+//   { messageHash, status: "queued" }                     // message_queued (recipient offline)
+```
+
+## 6. Read history
+
+```typescript
+const page = await peer.history(recipientPublicKeyHex, {
+    before: Date.now(), // optional: paginate backward from this ms timestamp
+    limit: 50,          // optional
+})
+// page: { messages: StoredMessage[], hasMore: boolean }
+```
+
+Each `StoredMessage` includes `id`, `from`, `to`, `messageHash`, `encrypted`, `l2psUid`, `l2psTxHash`, `timestamp`, and a `status` from the L2PS pipeline (`delivered`, `queued`, `sent`, `failed`, `l2ps_pending`, `l2ps_batched`, `l2ps_confirmed`).
+
+## 7. Discover peers and disconnect
+
+```typescript
+const peers = await peer.discover()              // string[] of online peer public keys
+const pk = await peer.requestPublicKey("alice")  // string | null
+
+peer.disconnect()
+```
+
+You can also read state synchronously: `peer.isConnected`, `peer.isRegistered`, `peer.peers`.
+
+## Connection lifecycle
+
+1. **Initialization** — construct an `L2PSMessagingPeer` with `serverUrl`, `publicKey`, `l2psUid`, and `signFn`.
+2. **Connection** — `connect()` opens the WebSocket and registers the peer; the server replies with `registered`.
+3. **Communication** — `send()`, `history()`, `discover()`, `requestPublicKey()`. Inbound messages arrive through `onMessage`.
+4. **Reconnection** — on socket close, the client retries with exponential backoff (base 1000 ms, max 10 attempts, capped at 30 s) and re-registers automatically.
+5. **Disconnection** — `disconnect()` stops reconnection, closes the socket, rejects all pending request-response promises, and clears the peer set.
+
+---
+
+## Legacy: MessagingPeer (port 3005)
+
+The legacy signaling-server client is still exported for backwards compatibility:
+
+```typescript
+import { instantMessaging, encryption } from "@kynesyslabs/demosdk"
+const unifiedCrypto = encryption.ucrypto
+
+await unifiedCrypto.generateAllIdentities(masterSeed)
+const mlKemAes = await unifiedCrypto.getIdentity("ml-kem-aes")
+
+const peer = new instantMessaging.MessagingPeer({
+    serverUrl: "ws://your-signaling-server:3005",
+    clientId: "user-" + Date.now(),
+    publicKey: mlKemAes.publicKey,
+})
+
+await peer.connect()
+peer.onMessage((message, fromId) => console.log(`Message from ${fromId}:`, message))
+const peers = await peer.discoverPeers()
+await peer.sendMessage(peers[0], "Hello!")
+```
+
+`MessagingPeer` does not provide history, offline delivery, or server-side delivery acknowledgement — for those, use `L2PSMessagingPeer`.

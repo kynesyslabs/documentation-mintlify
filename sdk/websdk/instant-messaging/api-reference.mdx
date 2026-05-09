@@ -1,384 +1,229 @@
 ---
-title: "Api Reference"
-description: "The `MessagingPeer` class is the core component of the Instant Messaging Protocol. It handles connection to the signaling server, peer discovery, mess..."
+title: "API Reference"
+description: "Complete method reference for L2PSMessagingPeer (primary) and MessagingPeer (legacy)."
 icon: "book"
 ---
+
 # API Reference
 
-
-
-The `MessagingPeer` class is the core component of the Instant Messaging Protocol. It handles connection to the signaling server, peer discovery, message exchange, and encryption/decryption.
-
-#### Constructor
+Both classes are exported from `@kynesyslabs/demosdk` under the `instantMessaging` namespace:
 
 ```typescript
-constructor(config: MessagingPeerConfig)
+import { instantMessaging } from "@kynesyslabs/demosdk"
+
+const { L2PSMessagingPeer, MessagingPeer } = instantMessaging
 ```
 
-Creates a new MessagingPeer instance.
+There is no `@kynesyslabs/demosdk/instant_messaging` subpath — the package root is the only canonical entry point.
 
-**Parameters:**
+---
 
-* `config`: Configuration object containing:
-  * `serverUrl`: WebSocket URL of the signaling server (the Demos Node managing the messenger instance)
-  * `clientId`: Unique identifier for this peer
-  * `publicKey`: Public key for encryption/decryption
+## L2PSMessagingPeer
+
+The production client. Connects to the L2PS messaging server (default port `3006`) and provides registered, E2E-encrypted, persisted messaging with pagination, offline delivery, and L2PS pipeline tracking.
+
+### Constructor
+
+```typescript
+constructor(config: L2PSMessagingConfig)
+```
+
+```typescript
+interface L2PSMessagingConfig {
+    /** WebSocket URL of the L2PS messaging server (e.g. "ws://localhost:3006") */
+    serverUrl: string
+    /** Client's ed25519 public key (hex string, 64+ chars) */
+    publicKey: string
+    /** L2PS network UID to join */
+    l2psUid: string
+    /** Function to sign proof strings with ed25519 private key. Returns hex signature. */
+    signFn: (message: string) => Promise<string> | string
+}
+```
+
+`signFn` is invoked by the SDK whenever a frame requires an ed25519 proof — currently for `register` (`register:{publicKey}:{timestamp}`) and `history` (`history:{peerKey}:{timestamp}`). It must return a hex-encoded ed25519 signature of the input string.
 
 **Example:**
 
 ```typescript
-const peer = new MessagingPeer({
+const peer = new L2PSMessagingPeer({
+    serverUrl: "ws://your-demos-node:3006",
+    publicKey: myEd25519PublicKeyHex,
+    l2psUid: "your-l2ps-network-uid",
+    signFn: async (msg) => myEd25519.signHex(msg),
+})
+```
+
+### Lifecycle
+
+#### `connect()`
+
+```typescript
+async connect(): Promise<RegisteredResponse["payload"]>
+// payload: { success: boolean, publicKey: string, l2psUid: string, onlinePeers: string[] }
+```
+
+Opens the WebSocket, sends `register` with a fresh ed25519 proof, and resolves once the server replies with the `registered` frame. Times out after 10 seconds. The returned payload includes the list of currently online peers in the same L2PS network.
+
+#### `disconnect()`
+
+```typescript
+disconnect(): void
+```
+
+Stops automatic reconnection, closes the WebSocket, rejects all pending request-response promises with `Disconnected`, clears the local peer set, and notifies connection-state handlers with `"disconnected"`.
+
+### Messaging
+
+#### `send(to, encrypted, messageHash)`
+
+```typescript
+async send(
+    to: string,
+    encrypted: SerializedEncryptedMessage,
+    messageHash: string,
+): Promise<MessageSentResponse["payload"] | MessageQueuedResponse["payload"]>
+```
+
+Sends an already-encrypted message to a peer. The returned payload is one of:
+
+- `{ messageHash, l2psStatus: "submitted" | "failed" }` — server frame `message_sent`
+- `{ messageHash, status: "queued" }` — server frame `message_queued` (recipient was offline)
+
+Throws `Not registered. Call connect() first.` if invoked before `connect()` completes.
+
+#### `history(peerKey, options)`
+
+```typescript
+async history(
+    peerKey: string,
+    options: { before?: number; limit?: number } = {},
+): Promise<HistoryResponse["payload"]>
+// payload: { messages: StoredMessage[], hasMore: boolean }
+```
+
+Fetches conversation history with `peerKey`. `before` is a millisecond timestamp for backward pagination; `limit` caps the page size. The SDK signs `history:{peerKey}:{timestamp}` with `signFn` and includes the proof in the request.
+
+#### `discover()`
+
+```typescript
+async discover(): Promise<string[]>
+```
+
+Returns the list of online peer public keys in the current L2PS network. Also updates the internal peer set (readable via `peer.peers`).
+
+#### `requestPublicKey(targetId)`
+
+```typescript
+async requestPublicKey(targetId: string): Promise<string | null>
+```
+
+Looks up a peer's public key by identifier. Returns the hex string, or `null` if the server cannot resolve `targetId`.
+
+### Getters
+
+| Getter | Type | Meaning |
+|--------|------|---------|
+| `isConnected` | `boolean` | WebSocket open. |
+| `isRegistered` | `boolean` | Server accepted the `register` frame. |
+| `peers` | `string[]` | Snapshot of currently online peer public keys. |
+
+### Event handlers
+
+All `on*` handlers can be registered multiple times; registration order is preserved.
+
+```typescript
+type L2PSMessageHandler = (message: IncomingMessage["payload"]) => void
+type L2PSErrorHandler = (error: ErrorResponse["payload"]) => void
+type L2PSPeerHandler = (publicKey: string) => void
+type L2PSConnectionStateHandler = (state: "connected" | "disconnected" | "reconnecting") => void
+```
+
+| Method | Fires when |
+|--------|------------|
+| `onMessage(handler)` | Server delivers a `message` frame. Handler receives `{ from, encrypted, messageHash, offline? }`. |
+| `onError(handler)` | Server sends an `error` frame, or a local protocol error occurs. Handler receives `{ code, message, details? }`. |
+| `onPeerJoined(handler)` | A peer joined the L2PS network (`peer_joined` frame). |
+| `onPeerLeft(handler)` | A peer left the L2PS network (`peer_left` frame). |
+| `onConnectionStateChange(handler)` | WebSocket transitions between `"connected"`, `"disconnected"`, and `"reconnecting"`. |
+
+Removal counterparts:
+
+```typescript
+peer.removeMessageHandler(handler)
+peer.removeErrorHandler(handler)
+peer.removePeerJoinedHandler(handler)
+peer.removePeerLeftHandler(handler)
+peer.removeConnectionStateHandler(handler)
+```
+
+### Reconnection
+
+On unexpected socket close, `L2PSMessagingPeer` retries with exponential backoff:
+
+- Base delay 1000 ms, doubled per attempt.
+- Capped at 30 000 ms.
+- Up to 10 attempts.
+- After the socket re-opens, `register` is replayed automatically; pending `send`/`history`/`discover` requests are not replayed.
+
+---
+
+## MessagingPeer (legacy)
+
+The legacy signaling-server client (default port `3005`). Provides peer registration, discovery, and per-message relay with the same `ml-kem-aes` encryption applied client-side. **No** persistence, **no** history API, **no** offline queue, **no** server-side delivery acknowledgement.
+
+### Constructor
+
+```typescript
+constructor(config: MessagingPeerConfig)
+
+interface MessagingPeerConfig {
+    serverUrl: string
+    clientId: string
+    publicKey: Uint8Array
+}
+```
+
+**Example:**
+
+```typescript
+const peer = new instantMessaging.MessagingPeer({
     serverUrl: "ws://your-signaling-server:3005",
     clientId: "your-unique-id",
     publicKey: mlKemAes.publicKey,
 })
 ```
 
-#### Methods
+### Methods
 
-**connect**
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `connect` | `async connect(): Promise<void>` | Connect and register. |
+| `disconnect` | `disconnect(): void` | Close the WebSocket. |
+| `register` | `register(): void` | Send the `register` frame (no wait). |
+| `registerAndWait` | `async registerAndWait(): Promise<void>` | Register and await confirmation; signs the public key with `ml-dsa` for binding. |
+| `discoverPeers` | `async discoverPeers(): Promise<string[]>` | Returns the list of connected peer client IDs. |
+| `sendMessage` | `async sendMessage(targetId: string, message: string): Promise<void>` | Encrypts `message` with the recipient's public key (auto-fetched) and relays through the signaling server. |
+| `requestPublicKey` | `async requestPublicKey(peerId: string): Promise<Uint8Array>` | Returns the peer's public key bytes. |
+| `respondToServer` | `respondToServer(questionId: string, response: any): void` | Replies to a `server_question` with a `peer_response`. |
+| `sendToServerAndWait` | `async sendToServerAndWait<T>(message: Message, expectedResponseType: Message["type"], options?: { timeout?: number; errorHandler?: (e: any) => void; retryCount?: number; filterFn?: (m: Message) => boolean }): Promise<T>` | Generic request-response helper with optional retry, timeout, custom error handling, and message filtering. |
 
-```typescript
-async connect(): Promise<void>
-```
+### Event handlers
 
-Connects to the signaling server and registers the peer.
+| Method | Handler signature |
+|--------|-------------------|
+| `onMessage(handler)` | `(message: any, fromId: string) => void` |
+| `onError(handler)` | `(error: { type: string; details: string }) => void` |
+| `onPeerDisconnected(handler)` | `(peerId: string) => void` |
+| `onConnectionStateChange(handler)` | `(state: "connected" \| "disconnected" \| "reconnecting") => void` |
+| `onServerQuestion(handler)` | `(question: any, questionId: string) => void` |
 
-**Returns:** Promise that resolves when connected and registered
+Removal counterparts: `removeMessageHandler`, `removeErrorHandler`, `removePeerDisconnectedHandler`, `removeConnectionStateHandler`.
 
-**Example:**
-
-```typescript
-await peer.connect()
-```
-
-**disconnect**
-
-```typescript
-disconnect(): void
-```
-
-Disconnects from the signaling server.
-
-**Example:**
-
-```typescript
-peer.disconnect()
-```
-
-**register**
+### `Message` interface
 
 ```typescript
-register(): void
-```
-
-Registers the peer with the signaling server.
-
-**Example:**
-
-```typescript
-peer.register()
-```
-
-**registerAndWait**
-
-```typescript
-async registerAndWait(): Promise<void>
-```
-
-Registers the peer with the signaling server and waits for confirmation.
-
-**Returns:** Promise that resolves when registration is confirmed
-
-**Example:**
-
-```typescript
-await peer.registerAndWait()
-```
-
-**discoverPeers**
-
-```typescript
-async discoverPeers(): Promise<string[]>
-```
-
-Discovers all connected peers.
-
-**Returns:** Array of peer IDs
-
-**Example:**
-
-```typescript
-const peers = await peer.discoverPeers()
-console.log("Available peers:", peers)
-```
-
-**sendMessage**
-
-```typescript
-async sendMessage(targetId: string, message: string): Promise<void>
-```
-
-Sends an encrypted message to a specific peer.
-
-**Parameters:**
-
-* `targetId`: ID of the target peer
-* `message`: Message to send
-
-**Example:**
-
-```typescript
-await peer.sendMessage("target-peer-id", "Hello from me!")
-```
-
-**requestPublicKey**
-
-```typescript
-async requestPublicKey(peerId: string): Promise<Uint8Array>
-```
-
-Requests a peer's public key.
-
-**Parameters:**
-
-* `peerId`: ID of the peer whose public key to request
-
-**Returns:** The peer's public key as a Uint8Array
-
-**Example:**
-
-```typescript
-const publicKey = await peer.requestPublicKey("target-peer-id")
-```
-
-**respondToServer**
-
-```typescript
-respondToServer(questionId: string, response: any): void
-```
-
-Responds to a server question.
-
-**Parameters:**
-
-* `questionId`: ID of the question to respond to
-* `response`: Response to send back to the server
-
-**Example:**
-
-```typescript
-peer.respondToServer("question-123", { answer: "This is my answer" })
-```
-
-**sendToServerAndWait**
-
-```typescript
-async sendToServerAndWait<T = any>(
-    message: Message,
-    expectedResponseType: Message["type"],
-    options: {
-        timeout?: number
-        errorHandler?: (error: any) => void
-        retryCount?: number
-        filterFn?: (message: Message) => boolean
-    } = {},
-): Promise<T>
-```
-
-Sends a message to the server and waits for a specific response type.
-
-**Parameters:**
-
-* `message`: Message to send
-* `expectedResponseType`: Type of response to wait for
-* `options`: Additional options:
-  * `timeout`: Timeout in milliseconds (default: 10000)
-  * `errorHandler`: Custom error handler
-  * `retryCount`: Number of retry attempts
-  * `filterFn`: Function to filter messages by additional criteria
-
-**Returns:** The response payload
-
-**Example:**
-
-```typescript
-// Basic usage
-const response = await peer.sendToServerAndWait(
-    {
-        type: "custom_action",
-        payload: { someData: "value" },
-    },
-    "custom_action_success",
-)
-
-// With retry logic
-const response = await peer.sendToServerAndWait(
-    {
-        type: "custom_action",
-        payload: { someData: "value" },
-    },
-    "custom_action_success",
-    {
-        retryCount: 3,
-        timeout: 5000,
-    },
-)
-
-// With custom error handling
-const response = await peer.sendToServerAndWait(
-    {
-        type: "custom_action",
-        payload: { someData: "value" },
-    },
-    "custom_action_success",
-    {
-        errorHandler: error => {
-            console.error("Custom error handling:", error)
-        },
-    },
-)
-
-// With filtering
-const response = await peer.sendToServerAndWait(
-    {
-        type: "custom_action",
-        payload: { someData: "value" },
-    },
-    "custom_action_success",
-    {
-        filterFn: message => message.payload.someProperty === expectedValue,
-    },
-)
-```
-
-#### Event Handlers
-
-**onMessage**
-
-```typescript
-onMessage(handler: (message: any, fromId: string) => void): void
-```
-
-Registers a handler for incoming messages.
-
-**Parameters:**
-
-* `handler`: Function to call when a message is received
-
-**Example:**
-
-```typescript
-peer.onMessage((message, fromId) => {
-    console.log(`Message from ${fromId}:`, message)
-})
-```
-
-**onServerQuestion**
-
-```typescript
-onServerQuestion(handler: (question: any, questionId: string) => void): void
-```
-
-Registers a handler for server questions.
-
-**Parameters:**
-
-* `handler`: Function to call when a server question is received
-
-**Example:**
-
-```typescript
-peer.onServerQuestion((question, questionId) => {
-    console.log("Server asked:", question)
-
-    // Process the question and prepare a response
-    const response = { answer: "This is my answer" }
-
-    // Send the response back to the server
-    peer.respondToServer(questionId, response)
-})
-```
-
-**onError**
-
-```typescript
-onError(handler: (error: { type: string; details: string }) => void): void
-```
-
-Registers a handler for errors.
-
-**Parameters:**
-
-* `handler`: Function to call when an error occurs
-
-**Example:**
-
-```typescript
-peer.onError(error => {
-    console.error(`Error: ${error.type} - ${error.details}`)
-})
-```
-
-**onPeerDisconnected**
-
-```typescript
-onPeerDisconnected(handler: (peerId: string) => void): void
-```
-
-Registers a handler for peer disconnection events.
-
-**Parameters:**
-
-* `handler`: Function to call when a peer disconnects
-
-**Example:**
-
-```typescript
-peer.onPeerDisconnected(peerId => {
-    console.log(`Peer disconnected: ${peerId}`)
-})
-```
-
-**onConnectionStateChange**
-
-```typescript
-onConnectionStateChange(handler: (state: "connected" | "disconnected" | "reconnecting") => void): void
-```
-
-Registers a handler for connection state changes.
-
-**Parameters:**
-
-* `handler`: Function to call when the connection state changes
-
-**Example:**
-
-```typescript
-peer.onConnectionStateChange(state => {
-    console.log(`Connection state changed: ${state}`)
-})
-```
-
-#### Message Types
-
-The Instant Messaging Protocol supports various message types:
-
-* **"register"**: Register a new peer with the server
-* **"discover"**: Request a list of all connected peers
-* **"message"**: Encrypted peer-to-peer messages
-* **"peer_disconnected"**: Notification when a peer disconnects
-* **"request_public_key"**: Request a peer's public key
-* **"public_key_response"**: Response containing a peer's public key
-* **"server_question"**: Question from the server to a peer
-* **"peer_response"**: Response from a peer to a server question
-* **"debug_question"**: Debug message to trigger a server question
-* **"error"**: Error notification with details
-
-#### Message Interface
-
-```typescript
-export interface Message {
+interface Message {
     type:
         | "register"
         | "discover"
@@ -394,12 +239,6 @@ export interface Message {
 }
 ```
 
-#### MessagingPeerConfig Interface
+### Reconnection
 
-```typescript
-export interface MessagingPeerConfig {
-    serverUrl: string
-    clientId: string
-    publicKey: Uint8Array
-
-```
+Same shape as `L2PSMessagingPeer`: exponential backoff starting at 1000 ms, capped at 30 000 ms, up to 10 attempts. Queued outbound messages are flushed once the connection reopens.

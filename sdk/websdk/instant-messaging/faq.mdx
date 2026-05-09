@@ -1,217 +1,186 @@
 ---
-title: "Faq"
-description: "The Instant Messaging Protocol is a secure, efficient, and scalable protocol for building real-time messaging applications on the Demos network. It pr..."
+title: "FAQ"
+description: "Common questions about the L2PSMessagingPeer (primary) and the legacy MessagingPeer."
 icon: "circle-question"
 ---
+
 # FAQ
 
-## Frequently Asked Questions (FAQ)
+## General
 
-### General Questions
+### Which class should I use, `L2PSMessagingPeer` or `MessagingPeer`?
 
-#### What is the Instant Messaging Protocol?
+Use **`L2PSMessagingPeer`** unless you have a specific reason not to. It is the production messaging client (default port `3006`) and is the only one that provides:
 
-The Instant Messaging Protocol is a secure, efficient, and scalable protocol for building real-time messaging applications on the Demos network. It provides end-to-end encryption, peer discovery, and reliable message delivery for developers creating messenger applications.
+- Conversation history with pagination (`history()`)
+- Offline delivery (server queues messages for offline recipients)
+- Server-side delivery acknowledgement (`message_sent` / `message_queued` frames)
+- L2PS pipeline persistence (mempool → batch → L1 proof → L1 finality)
+- L2PS network isolation via `l2psUid`
+- `peer_joined` / `peer_left` presence events
 
-#### What are the main features of the Instant Messaging Protocol?
+Use **`MessagingPeer`** only when you need the legacy signaling-server transport (default port `3005`). It is a transient relay — no history, no persistence, no offline queue, no ack.
 
-The protocol offers several key features:
+### What is the Instant Messaging Protocol?
 
-* End-to-end encryption using state-of-the-art cryptographic algorithms
-* Built-in peer discovery mechanisms
-* Low-latency real-time communication
-* Reliable message delivery with acknowledgment
-* Scalable architecture for handling many concurrent connections
-* Cross-platform support
+A pair of WebSocket protocols, both with end-to-end encryption applied client-side. The L2PS protocol additionally persists messages through the Demos L2PS rollup pipeline so they can be retrieved later and delivered to peers that were offline at send time.
 
-#### What platforms does the Instant Messaging Protocol support?
+### What platforms does it support?
 
-The protocol is designed to work across different platforms and devices. It can be used to build applications for:
+Anywhere `WebSocket` and `crypto.getRandomValues` are available — modern browsers, Node, mobile and desktop runtimes that ship those primitives.
 
-* Web browsers (using JavaScript/TypeScript)
-* Mobile devices (iOS, Android)
-* Desktop applications
-* IoT devices
+## Encryption
 
-### Technical Questions
+### How does the encryption work?
 
-#### How does the encryption work?
+Both classes use end-to-end public-key encryption: each peer has a public/private key pair, and the sender encrypts with the recipient's public key. Only the recipient's private key can decrypt.
 
-The protocol uses end-to-end encryption with public-key cryptography. Each peer has a public/private key pair, and messages are encrypted using the recipient's public key. Only the recipient with the corresponding private key can decrypt the messages.
+### What cryptographic algorithms are used?
 
-#### What cryptographic algorithms are used?
+`ml-kem-aes` for message encryption (ML-KEM-768 key encapsulation + AES-GCM), and `ml-dsa` for signing keys that bind the encryption identity to the registration identity.
 
-The protocol uses the ML-KEM-AES algorithm for encryption, which provides strong security guarantees. The implementation is based on modern cryptographic standards and best practices.
+### Does the protocol support perfect forward secrecy?
 
-#### How does peer discovery work?
+Yes. Each message uses a fresh ML-KEM encapsulation, so compromising one decapsulated AES key does not expose past or future messages.
 
-Peer discovery is facilitated by the signaling server. When a peer connects to the server, it registers its presence. Other peers can then request a list of all connected peers from the server.
+### How are peers authenticated?
 
-#### How reliable is message delivery?
+For `L2PSMessagingPeer`, registration carries an ed25519 proof — the client signs `register:{publicKey}:{timestamp}` with the configured `signFn` and the server verifies it before accepting subsequent frames. The same `signFn` is used to authorize `history` requests.
 
-The protocol includes mechanisms to ensure reliable message delivery. Messages are queued if the recipient is offline and delivered when they reconnect. The protocol also includes acknowledgment mechanisms to confirm message receipt.
+For `MessagingPeer`, the client signs its ML-KEM public key with an ML-DSA signing key (via `unifiedCrypto`) during `registerAndWait()`, binding the encryption key to the signing identity.
 
-#### How does the protocol handle network issues?
+## Delivery and reliability (L2PSMessagingPeer)
 
-The protocol includes automatic reconnection with exponential backoff. If the connection to the signaling server is lost, the MessagingPeer will attempt to reconnect automatically, with increasing delays between attempts to avoid overwhelming the server.
+### How is delivery acknowledged?
 
-### Implementation Questions
+`L2PSMessagingPeer.send()` resolves with one of two server frames: `message_sent` (`{ messageHash, l2psStatus }`) when the message was delivered to an online recipient, or `message_queued` (`{ messageHash, status: "queued" }`) when the recipient was offline and the message was stored.
 
-#### How do I set up a signaling server?
+### Are messages queued if the recipient is offline?
 
-Setting up a signaling server is automatically managed when running a Demos Node.
+Yes — but only with `L2PSMessagingPeer`. The server stores the encrypted payload and delivers it the next time the recipient connects. Inbound `message` frames carry an `offline?: boolean` flag indicating delivery from offline storage. `MessagingPeer` (legacy) has no offline queue.
 
-#### How do I create a MessagingPeer instance?
+### Can I retrieve past messages?
 
-To create a MessagingPeer instance, you need to provide a configuration object with the server URL, a unique client ID, and a public key:
+Yes — but only with `L2PSMessagingPeer`. Call `peer.history(peerKey, { before, limit })` and you'll get back `{ messages: StoredMessage[], hasMore }`. Each `StoredMessage` includes its `status` from the L2PS pipeline (`delivered`, `queued`, `sent`, `failed`, `l2ps_pending`, `l2ps_batched`, `l2ps_confirmed`) and the `l2psTxHash` once it has been included in a batch.
 
-```javascript
-import {
-    MessagingPeer
-} from "@kynesyslabs/demosdk/instant_messaging"
-import { unifiedCrypto } from "@kynesyslabs/demosdk/encryption/unifiedCrypto"
+### How does the protocol handle network issues?
 
-// NOTE: Be sure to either set up unifiedCrypto as defined in the
-// quickstart or use an already defined unifiedCrypto instance
-// with identities generated
+Both clients use exponential-backoff reconnection (base 1000 ms, capped at 30 000 ms, up to 10 attempts). `L2PSMessagingPeer` re-runs `register` automatically after reconnection.
 
-mlKemAes = await unifiedCrypto.getIdentity("ml-kem-aes")
+## Implementation
 
+### How do I set up the messaging server?
 
-const peer = new MessagingPeer({
+It is launched automatically as part of a Demos node. The L2PS messaging server defaults to port `3006`; the legacy signaling server defaults to port `3005`.
+
+### How do I create an `L2PSMessagingPeer` instance?
+
+```typescript
+import { instantMessaging } from "@kynesyslabs/demosdk"
+
+const peer = new instantMessaging.L2PSMessagingPeer({
+    serverUrl: "ws://your-demos-node:3006",
+    publicKey: myEd25519PublicKeyHex,
+    l2psUid: "your-l2ps-network-uid",
+    signFn: async (message) => myEd25519.signHex(message),
+})
+
+await peer.connect()
+```
+
+See the [Quickstart](/sdk/websdk/instant-messaging/quickstart) for the full flow including encryption, sending, and history.
+
+### How do I create a `MessagingPeer` instance (legacy)?
+
+```typescript
+import { instantMessaging, encryption } from "@kynesyslabs/demosdk"
+const unifiedCrypto = encryption.ucrypto
+
+// Set up unifiedCrypto as in the quickstart, or reuse an existing instance
+const mlKemAes = await unifiedCrypto.getIdentity("ml-kem-aes")
+
+const peer = new instantMessaging.MessagingPeer({
     serverUrl: "ws://your-signaling-server:3005",
     clientId: "your-unique-id",
-    publicKey:  mlKemAes.publicKey,
+    publicKey: mlKemAes.publicKey,
 })
 ```
 
-#### How do I send a message to another peer?
+> The only canonical import path is `import { instantMessaging } from "@kynesyslabs/demosdk"`. There is **no** `@kynesyslabs/demosdk/instant_messaging` subpath.
 
-To send a message to another peer, you need to know their ID. You can discover available peers using the `discoverPeers` method, and then send a message using the `sendMessage` method:
+### How do I send a message?
 
-```javascript
-// Discover available peers
-const peers = await peer.discoverPeers()
+With `L2PSMessagingPeer`, encrypt the plaintext yourself, serialize to `SerializedEncryptedMessage` (`{ ciphertext, nonce, ephemeralKey? }` with base64 / hex fields), then call `peer.send(to, encrypted, messageHash)`.
 
-// Send a message to the first available peer
-if (peers.length > 0) {
-    await peer.sendMessage(peers[0], "Hello from me!")
-}
-```
+With `MessagingPeer`, call `peer.sendMessage(targetId, plaintext)` — encryption is performed automatically against the recipient's public key.
 
-#### How do I handle incoming messages?
+### How do I handle incoming messages?
 
-You can register a message handler using the `onMessage` method:
+```typescript
+// L2PSMessagingPeer
+peer.onMessage(({ from, encrypted, messageHash, offline }) => {
+    // Decrypt `encrypted` with your ML-KEM private key here.
+})
 
-```javascript
+// MessagingPeer (legacy)
 peer.onMessage((message, fromId) => {
     console.log(`Message from ${fromId}:`, message)
 })
 ```
 
-#### How do I handle errors?
+### How do I handle errors?
 
-You can register an error handler using the `onError` method:
+```typescript
+// L2PSMessagingPeer
+peer.onError(({ code, message, details }) => {
+    console.error(`L2PS error [${code}]:`, message, details)
+})
 
-```javascript
+// MessagingPeer (legacy)
 peer.onError(error => {
     console.error(`Error: ${error.type} - ${error.details}`)
 })
 ```
 
-#### How do I handle peer disconnection events?
+`L2PSMessagingPeer` server-side error codes are: `INVALID_MESSAGE`, `REGISTRATION_REQUIRED`, `INVALID_PROOF`, `PEER_NOT_FOUND`, `L2PS_NOT_FOUND`, `L2PS_SUBMIT_FAILED`, `RATE_LIMITED`, `INTERNAL_ERROR`.
 
-You can register a peer disconnected handler using the `onPeerDisconnected` method:
+### How do I handle peer presence?
 
-```javascript
-peer.onPeerDisconnected(peerId => {
-    console.log(`Peer disconnected: ${peerId}`)
-})
+```typescript
+// L2PSMessagingPeer
+peer.onPeerJoined(publicKey => console.log("joined:", publicKey))
+peer.onPeerLeft(publicKey => console.log("left:", publicKey))
+
+// MessagingPeer (legacy) — only "disconnected" is exposed
+peer.onPeerDisconnected(peerId => console.log(`Peer disconnected: ${peerId}`))
 ```
 
-### Security Questions
+## Troubleshooting
 
-#### Is the protocol secure?
+### What should I do if I can't connect?
 
-Yes, the protocol is designed with security as a top priority. It uses end-to-end encryption to ensure that only the intended recipient can read messages, even if they are intercepted during transmission.
+- Verify the server is running and the URL is reachable (port `3006` for L2PS, `3005` for legacy).
+- Check network and firewall rules.
+- For `L2PSMessagingPeer`, make sure your `signFn` actually returns a hex ed25519 signature of the input string — bad proofs surface as `INVALID_PROOF`.
+- For `MessagingPeer`, make sure your `unifiedCrypto` instance has identities generated (see the [Quickstart](/sdk/websdk/instant-messaging/quickstart)).
 
-#### How does the protocol handle authentication?
+### What should I do if messages are not being delivered?
 
-Peers are authenticated using their public keys. When a peer registers with the signaling server, it provides its public key, which is used to verify its identity. Furthermore, the peer needs to sign its public key with a signing key (included in the unifiedCrypto instance) to link its encryption key (ml-kem) to its signing key (ml-dsa).
+- With `L2PSMessagingPeer`, look at the resolved value of `send()` — `message_queued` means the recipient is offline, not that delivery failed. The recipient will receive it on next connect with `offline: true`.
+- With `MessagingPeer`, the recipient must be connected at the moment of send; there is no offline queue.
+- Confirm the recipient public key / client ID is correct, and check `onError` for server-reported issues.
 
-#### Does the protocol support perfect forward secrecy?
+### How do I debug the connection?
 
-Yes, the protocol supports perfect forward secrecy. Each message uses a unique encryption key, preventing compromise of past messages if a key is compromised. This is obtained by using ml-kem as the encapsulation algorithm on top of AES.
-
-#### Can I implement additional security measures?
-
-Yes, you can implement additional security measures on top of the protocol. For example, you could add user authentication, message signing, or additional encryption layers.
-
-### Performance Questions
-
-#### How scalable is the protocol?
-
-The protocol is designed to be highly scalable. The signaling server can handle a large number of concurrent connections, and the peer-to-peer communication model reduces the load on the server.
-
-#### What is the latency of message delivery?
-
-The protocol is designed for low-latency communication. Message delivery time depends on network conditions, but the protocol minimizes overhead to ensure fast delivery.
-
-#### How does the protocol handle large messages?
-
-The protocol can handle messages of various sizes. Large messages are automatically chunked and reassembled if necessary.
-
-#### How does the protocol handle high message volumes?
-
-The protocol includes mechanisms to handle high message volumes, including message queuing and rate limiting to prevent overwhelming the network or the signaling server.
-
-### Troubleshooting
-
-#### What should I do if I can't connect to the signaling server?
-
-If you can't connect to the signaling server, check the following:
-
-* Ensure the server is running and accessible
-* Check your network connection
-* Verify that the server URL is correct
-* Check if there are any firewall rules blocking the connection
-* Ensure your `unifiedCrypto` instance is initialized (aka, identities are generated and available as explained in [quickstart.md](/sdk/websdk/instant-messaging/quickstart))
-
-#### What should I do if messages are not being delivered?
-
-If messages are not being delivered, check the following:
-
-* Ensure the recipient is connected to the signaling server
-* Check if there are any network issues
-* Verify that the recipient's ID is correct
-* Check if there are any error messages in the console
-
-#### What should I do if I'm experiencing high latency?
-
-If you're experiencing high latency, check the following:
-
-* Check your network connection
-* Ensure the signaling server is not overloaded
-* Consider using a signaling server closer to your location
-* Check if there are any firewall rules or network configurations affecting performance
-
-#### How do I debug issues with the protocol?
-
-You can enable debug logging to get more information about what's happening:
-
-```javascript
-// Enable debug logging
-peer.onConnectionStateChange(state => {
-    console.log(`Connection state changed: ${state}`)
-})
-
-peer.onError(error => {
-    console.error(`Error: ${error.type} - ${error.details}`)
-})
+```typescript
+peer.onConnectionStateChange(state => console.log("state:", state))
+peer.onError(err => console.error("error:", err))
 ```
 
-### Additional Resources
+## Additional resources
 
-* [api-reference.md](/sdk/websdk/instant-messaging/api-reference): Detailed documentation of the available methods and interfaces.
-* [quickstart.md](/sdk/websdk/instant-messaging/quickstart): Step-by-step guide to setting up a basic messenger code.
-* [encryption.md](/sdk/websdk/instant-messaging/encryption): explanation about the encryption used within the messenger
+- [API reference](/sdk/websdk/instant-messaging/api-reference)
+- [Quickstart](/sdk/websdk/instant-messaging/quickstart)
+- [Encryption](/sdk/websdk/instant-messaging/encryption)
+- [Architecture overview](/sdk/websdk/instant-messaging/architecture-overview)
+- [Message types](/sdk/websdk/instant-messaging/message-types)

@@ -1,14 +1,29 @@
 ---
 title: "Encryption"
-description: "The Instant Messaging Protocol uses ml-kem-aes for secure communication:"
+description: "Both messaging clients share the same ml-kem-aes end-to-end encryption layer."
 icon: "lock"
 ---
-The Instant Messaging Protocol uses ml-kem-aes for secure communication:
 
-1. Key Generation: Each peer generates a public/private key pair
-2. Public Key Exchange: Peers exchange public keys through the signaling server
-3. Signatures: peers sign their ml-kem public keys with a ml-dsa signing key from the same unifiedCrypto instance to link their two keys
-4. Message Encryption: Messages are encrypted using the recipient's public key through encapsulation of a shared secret
-5. Message Decryption: Recipients decrypt messages using their private key to decapsulate the shared secret and perform AES decryption
+# Encryption
 
+Both `L2PSMessagingPeer` and the legacy `MessagingPeer` use the **same** end-to-end encryption layer. Only the persistence and transport layer differs between the two — the cryptography is identical.
 
+The protocol uses `ml-kem-aes` for secure communication:
+
+1. **Key generation.** Each peer generates a public/private key pair (post-quantum ML-KEM, ML-KEM-768 in the Demos default).
+2. **Public key exchange.** Peers exchange public keys through their respective server (the L2PS messaging server for `L2PSMessagingPeer`, the legacy signaling server for `MessagingPeer`).
+3. **Signatures.** Peers sign their ML-KEM public key with an ML-DSA signing key from the same `unifiedCrypto` instance to bind the encryption key to the signing identity.
+4. **Message encryption.** Messages are encrypted using the recipient's public key by encapsulating a fresh shared secret per message (this is what gives the protocol its forward-secrecy property).
+5. **Message decryption.** Recipients use their private key to decapsulate the shared secret and AES-decrypt the payload.
+
+For `L2PSMessagingPeer`, the encrypted payload is serialized to the wire as `SerializedEncryptedMessage`:
+
+```typescript
+interface SerializedEncryptedMessage {
+    ciphertext: string       // base64
+    nonce: string            // base64 (AES-GCM nonce/IV)
+    ephemeralKey?: string    // hex (only when using X25519 ephemeral DH)
+}
+```
+
+For `MessagingPeer`, the same plaintext is serialized using `SerializedEncryptedObject` from the SDK's `unifiedCrypto` (`algorithm`, `serializedCipherText`, `serializedEncryptedData`).

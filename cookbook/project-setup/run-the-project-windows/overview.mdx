@@ -1,123 +1,131 @@
 ---
 title: "Run the Project (Windows)"
-description: "Setup and run the Demos node on Windows using WSL2"
+description: "Run a Demos Network node on Windows via WSL 2 + Docker Compose (recommended) or bare metal."
 icon: "windows"
 ---
 
+# Run the project (Windows)
+
+The supported Windows path is **WSL 2 with Docker Compose**. Docker Desktop's WSL 2 backend integrates the `docker` and `docker compose` CLIs into your Ubuntu shell, and the node treats your WSL distro as a normal Linux host.
+
 ## Prerequisites
 
-- Node version: **20.15.1**
-- VS Code installed
-- Docker Desktop installed
-- WSL2 enabled (see [WSL2 Setup Guide](/cookbook/project-setup/run-the-project-windows/wsl-2-setup))
+- Windows 10 (with the WSL2 update package) or Windows 11
+- WSL 2 with an Ubuntu distro — see the [WSL 2 setup guide](/cookbook/project-setup/run-the-project-windows/wsl-2-setup)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) with the **WSL 2 based engine** enabled and **WSL Integration** turned on for your Ubuntu distro
+- `git` (already present in Ubuntu)
 
-## Setup Steps
-
-### Step 1: Project Configuration
-
-1. Open the project with **VS Code**
-2. Create a `.env` file in the root directory (if it doesn't exist) and copy the content from `env.example`:
-
-```bash
-CONSENSUS_TIME=10
-RPC_FEE=5
-SERVER_PORT=53550
-EXPOSED_URL=http://127.0.0.1:53550
-```
-
-### Step 2: Generate Keys
-
-Run the project to get the public and private keys (**Note: It will crash, this is expected**):
-
-1. Find the **public key** file in the root directory
-2. Copy the **public key**
-3. Create a file `demos_peerlist.json` in the root directory
-4. Copy the content from `demos_peerlist.json.example` and replace the `"identity"` with your public key
-
-<Frame>
-  <img src="https://lh7-rt.googleusercontent.com/docsz/AD_4nXceZxNlQ2gp247ZQoGCeQ_fwrh5fALwSbfVoBf6yj2qP4JTyXgvToN2hM_DIkGZnFDJ9nL2aX-sOxnuP4iuG9K5AxS-EUM8tO9YaWW3tz2EBXxmhPJVuTh0YiuW1udJUjibE0-L?key=RkbH77fVOlsq6AUc04iv4DYy" alt="Public key configuration" />
-</Frame>
-
-### Step 3: Setup WSL2
-
-[Setup WSL2](/cookbook/project-setup/run-the-project-windows/wsl-2-setup) on your machine if you don't have it installed.
-
-### Step 4: Install Dependencies
-
-Open the Ubuntu terminal and run the following commands:
-
-```bash
-# Go to the project folder (example for Desktop)
-cd /mnt/c/Users/User/Desktop/node
-
-# Verify node version (should be 20.15.1)
-node -v
-
-# Install required packages
-sudo apt-get update
-sudo apt-get install dos2unix
-sudo apt install nodejs
-sudo apt install npm
-sudo npm install -g n
-chmod +x install
-sed -i 's/\r$//' ./install
-./install
-```
-
-<Note>
-If you encounter any issues, check the [Issue Troubleshooting](/cookbook/project-setup/run-the-project-windows/issue-troubleshooting) section.
-</Note>
-
-### Step 5: Configure Docker
-
-1. Open **Docker Desktop**
-2. Go to Settings
-3. In the **General** section, enable the WSL 2-based engine
-
-<Frame>
-  <img src="https://lh7-rt.googleusercontent.com/docsz/AD_4nXfqWOJ5hvQLb2OMTDbLEJRpbpOugZO3SPWQq8DwWnMNjo_9IsCCn2ldMZvATpFo5UeNFm-ZGLi6SDC7OAGiK3L762n28tvSC9QEVPVpnp4SWXooDcSWDHB0Gvb_FN8HxYqZpeNu1Q?key=RkbH77fVOlsq6AUc04iv4DYy" alt="Docker WSL2 settings" />
-</Frame>
-
-4. In Settings, go to **Resources > WSL Integration** and enable WSL 2 and Ubuntu
-
-<Frame>
-  <img src="https://lh7-rt.googleusercontent.com/docsz/AD_4nXe4O7Xa9lwdP2rcEcLy3HcF2bLEghScL2YSR8ZtY-4nbwzydy29mZN7a7-M9EUHp61orcUB6DL7bndy24DqclaUaF9M7ReBdx-6UAV3n__SOJwCEUDOLiX6HC4m-0DGoluRSrt9AQ?key=RkbH77fVOlsq6AUc04iv4DYy" alt="Docker WSL integration" />
-</Frame>
-
-5. Click **Apply & Restart** to apply the changes
-6. Verify Docker in Ubuntu Terminal:
+Verify inside the Ubuntu (WSL 2) shell:
 
 ```bash
 docker --version
+docker compose version
 ```
 
-### Step 6: Run the Project
+<Note>
+Use `docker compose` (with a space). The legacy hyphenated `docker-compose` is the deprecated Python script and is not supported.
+</Note>
 
-1. In the Ubuntu terminal, run:
+## Track 1: Docker Compose (recommended)
 
-```bash
-sed -i 's/\r$//' ./run
-```
+### Step 1 — Enable Docker Desktop WSL 2 integration
 
-2. Go to the postgres folder and start the database:
+1. Open **Docker Desktop → Settings**.
+2. Under **General**, enable **Use the WSL 2 based engine**.
+3. Under **Resources → WSL Integration**, enable integration and toggle on your Ubuntu distro.
+4. Click **Apply & Restart**.
 
-```bash
-cd postgres_5332/
-sudo usermod -aG docker $USER
-```
+### Step 2 — Three-step quickstart inside WSL 2
 
-3. Close and open a new WSL terminal window
-
-4. Start the database:
+Open the Ubuntu shell and run:
 
 ```bash
-cd postgres_5332/
+git clone https://github.com/kynesyslabs/node.git && cd node
+cp .env.example .env
 docker compose up
 ```
 
-5. In a new terminal, go back to root directory and run the project:
+The first run pulls images and builds the node container, which can take a few minutes. Subsequent starts are near-instant.
+
+When the stack is healthy (browse from Windows; ports forward through Docker Desktop):
+
+- Node RPC: <http://localhost:53550> — try `curl http://localhost:53550/info` from the WSL shell
+- Grafana: <http://localhost:3000> (default `admin` / `demos`)
+- Prometheus: <http://localhost:9091>
+
+<Tip>
+Clone the repo **inside the WSL 2 filesystem** (e.g. `~/node`), not under `/mnt/c/...`. WSL 2's Linux filesystem is dramatically faster for builds and Docker bind mounts than the Windows-mounted drive.
+</Tip>
+
+### Step 3 — Tour of `.env`
+
+`.env.example` is the canonical template. The defaults work for local development. The variables you are most likely to touch:
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `CONSENSUS_TIME` | `10` | Block production interval (seconds). |
+| `RPC_FEE` | `1` | Per-tx fee component. Total flat fee = `RPC_FEE + NETWORK_FEE + BURN_FEE` (default `1+1+1=3`). |
+| `NETWORK_FEE` | `1` | Per-tx fee component. |
+| `BURN_FEE` | `1` | Per-tx fee component. |
+| `RPC_PORT` | `53550` | Host-mapped RPC port. Change if 53550 is taken. |
+| `EXPOSED_URL` | `http://localhost:53550` | Public URL advertised to peers. **Loopback default is fine for local dev — set it to your reachable address before joining a real network.** |
+| `OMNI_ENABLED` / `OMNI_PORT` | `true` / `53551` | OmniProtocol binary RPC. Modes via `OMNI_MODE`: `HTTP_ONLY`, `OMNI_PREFERRED`, `OMNI_ONLY`. |
+| `TLSNOTARY_ENABLED` | `true` | Set to `false` to skip TLSNotary entirely. |
+| `TLSNOTARY_SIGNING_KEY` | _(empty)_ | **Leave empty in default docker mode** — the sidecar manages its own key. Only set when `TLSNOTARY_MODE=ffi`. |
+| `GRAFANA_ADMIN_PASSWORD` | `demos` | Change this. |
+| `COMPOSE_PROFILES` | `monitoring,tlsnotary` | Which compose profiles to bring up. |
+
+Leave `PG_HOST=postgres` and `TLSNOTARY_HOST=tlsnotary` exactly as shipped — those are the in-network service names used by docker compose.
+
+<Warning>
+Old docs referenced `RPC_FEE=5` and `SERVER_PORT`. Both are wrong. The current names are `RPC_FEE` (default `1`, plus `NETWORK_FEE=1` and `BURN_FEE=1`) and `RPC_PORT`.
+</Warning>
+
+### Common operations (run from the WSL shell)
 
 ```bash
-cd ../
-./run
+# Follow logs
+docker compose logs -f node
+
+# Update to the latest source
+git pull
+docker compose up -d --build
+
+# Stop containers, KEEP volumes (your identity, chain data, etc.)
+docker compose down
+
+# Stop AND DELETE all volumes — nuclear, destroys identity + state
+docker compose down -v
 ```
+
+State persists in named Docker volumes prefixed `demos_` (e.g. `demos_node_state` holds `.demos_identity`). Docker Desktop manages the volumes — they survive `docker compose down` but not `docker compose down -v`.
+
+### Going public
+
+If you want peers to reach a node hosted on a Windows machine, you'll need to forward the relevant inbound TCP ports through both the Windows Defender Firewall and your router (and set `EXPOSED_URL` to your public address) **before** advertising the URL:
+
+- `53550` — Node RPC
+- `53551` — OmniProtocol
+- `7047` — TLSNotary (only if enabled)
+
+For production deployments, a Linux VPS is strongly preferred over a desktop Windows host.
+
+### Troubleshooting
+
+If you hit an issue, see the dedicated [Issue Troubleshooting](/cookbook/project-setup/run-the-project-windows/issue-troubleshooting) page.
+
+---
+
+## Track 2: Bare metal with `./run` (advanced)
+
+Track 2 runs the node binary natively via Bun inside WSL 2 and uses Docker only for a Postgres sidecar managed by the `./run` script. Pick this path only for core development, kernel-level debugging, or TUI-driven operation. **Do not run Track 2 from Windows directly** — always use the Ubuntu shell inside WSL 2.
+
+The full walkthrough — Bun via Mise (or the direct installer), Rust for `wstcp`, `./scripts/install-deps.sh`, `./run` flags — lives in the source of truth:
+
+- [INSTALL.md — Track 2: Bare metal with `./run`](https://github.com/kynesyslabs/node/blob/main/INSTALL.md#track-2-bare-metal-with-run)
+
+For the bare-metal path, override these in your `.env`:
+
+- `PG_HOST=localhost`
+- `PG_PORT=5332`
+- `TLSNOTARY_HOST=localhost`

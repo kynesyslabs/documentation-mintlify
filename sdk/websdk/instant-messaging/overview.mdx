@@ -1,15 +1,42 @@
 ---
 title: "Instant Messaging"
-description: "This chapter will cover the basics of using E2E Post-Quantum messaging capabilities through the Demos SDK."
+description: "End-to-end encrypted, post-quantum messaging through the Demos SDK, with two client classes for two different delivery models."
 icon: "messages"
 ---
 
 # Instant Messaging
 
-This chapter will cover the basics of using E2E Post-Quantum messaging capabilities through the Demos SDK.
+The Demos SDK ships **two** instant-messaging client classes under the `instantMessaging` namespace. Both use the same E2E encryption layer (`ml-kem-aes` for key encapsulation and AES-GCM, `ml-dsa` for the registration proof key), but they target different transports and delivery guarantees:
 
-Demos nodes automatically launch a service called `signalingServer`, which spins up a server responsible for handling private, end-to-end, on-node messages. These messages are then attested on the Demos network.
+| Class | Default port | Transport | History | Offline delivery | Delivery acknowledgement | When to use |
+|-------|--------------|-----------|---------|------------------|--------------------------|-------------|
+| `L2PSMessagingPeer` | `3006` | L2PS messaging server | Yes — `history()` API with pagination | Yes — server queues messages for offline peers | Yes — `message_sent` / `message_queued` frames | Production. L2PS-backed messaging with persistence and L2PS pipeline (mempool → batch → L1 proof → L1 finality). |
+| `MessagingPeer` | `3005` | Legacy signaling server | No | No | No | Transient relay-only messaging. Kept for backwards compatibility. |
 
-Each node manages its own messaging service, avoiding network-wide congestion and confirmation delays, while still forwarding attestations of the encrypted communications to the blockchain.
+The default reader of these docs should reach for **`L2PSMessagingPeer`**. Every code example below uses it unless explicitly labeled "legacy".
 
-In the next chapter, we will learn how to use the `MessagingPeer` class to implement this type of communication.
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="What is the Instant Messaging Protocol?" href="/sdk/websdk/instant-messaging/what-is-the-instant-messaging-protocol" icon="circle-question">
+    The L2PS-backed protocol, plus how the legacy signaling-only path differs.
+  </Card>
+  <Card title="Architecture overview" href="/sdk/websdk/instant-messaging/architecture-overview" icon="sitemap">
+    Port 3005 vs port 3006, and the L2PS pipeline.
+  </Card>
+  <Card title="Quickstart" href="/sdk/websdk/instant-messaging/quickstart" icon="bolt">
+    Connect, send, receive, and read history with `L2PSMessagingPeer`.
+  </Card>
+  <Card title="API reference" href="/sdk/websdk/instant-messaging/api-reference" icon="book">
+    Method-by-method reference for both classes.
+  </Card>
+  <Card title="Message types" href="/sdk/websdk/instant-messaging/message-types" icon="envelope">
+    Wire-protocol message types for each class.
+  </Card>
+  <Card title="Encryption" href="/sdk/websdk/instant-messaging/encryption" icon="lock">
+    The shared `ml-kem-aes` E2E layer.
+  </Card>
+  <Card title="FAQ" href="/sdk/websdk/instant-messaging/faq" icon="circle-question">
+    Common questions, including which class to pick.
+  </Card>
+</CardGroup>

@@ -1,10 +1,66 @@
 ---
 title: "Architecture Overview"
-description: "The Instant Messaging Protocol consists of three main components:"
+description: "The two messaging servers (ports 3005 and 3006), the two client classes, and the L2PS persistence pipeline."
 icon: "sitemap"
 ---
-The Instant Messaging Protocol consists of three main components:
 
-1. Signaling Server: A central hub that facilitates peer discovery and message routing. It runs automatically on every Demos node and it's part of the backend
-2. MessagingPeer: A client-side class that handles connection and message exchange. It's the SDK part we are focusing on.
-3. Encryption System: A cryptographic layer that ensures secure communication, leveraging Post Quantum Cryptography through the robust Demos SDK features.
+# Architecture Overview
+
+A Demos node exposes two distinct messaging surfaces. Each is paired with a dedicated SDK client class.
+
+## Two transports, two clients
+
+| Component | Port | SDK class | Persistence |
+|-----------|------|-----------|-------------|
+| L2PS messaging server | `3006` (default) | `instantMessaging.L2PSMessagingPeer` | Yes — through L2PS rollup |
+| Legacy signaling server | `3005` (default) | `instantMessaging.MessagingPeer` | No — relay only |
+
+Both servers use the same on-the-wire E2E encryption (`ml-kem-aes`); the difference is what the server does with the encrypted payload after receiving it.
+
+## L2PSMessagingPeer pipeline (port 3006)
+
+```
+                +-----------------------+
+   client A --> | L2PS messaging server | --> recipient online?
+                +-----------------------+         |
+                          |                       +-- yes --> deliver via WS  (frame: "message_sent")
+                          v                       +-- no  --> store offline   (frame: "message_queued")
+                  +---------------+
+                  | L2PS mempool  |
+                  +---------------+
+                          |
+                          v
+                  +---------------+
+                  |  L2PS batch   |
+                  +---------------+
+                          |
+                          v
+                  +---------------+
+                  |   L1 proof    |
+                  +---------------+
+                          |
+                          v
+                  +---------------+
+                  | L1 finality   |
+                  +---------------+
+```
+
+Each persisted message records its progress through the pipeline via `MessageStatus`:
+
+- `delivered` — handed to recipient via WebSocket
+- `queued` — recipient offline, stored for later delivery
+- `sent` — flushed from offline queue to recipient
+- `failed` — L2PS submission or persistence failed
+- `l2ps_pending` — submitted to L2PS mempool, not yet batched
+- `l2ps_batched` — included in an L2PS batch
+- `l2ps_confirmed` — confirmed on L1
+
+The L2PS server also enforces **network isolation** via the `l2psUid` provided at registration: peers only discover and message peers in the same L2PS network.
+
+## MessagingPeer (legacy, port 3005)
+
+The legacy signaling server is a transient relay. It tracks connected peers by `clientId`, forwards encrypted payloads, and emits `peer_disconnected` notifications when a peer drops. There is no message store, no batch pipeline, and no L1 attestation — the signaling server is purely a discovery and routing surface.
+
+## Shared encryption layer
+
+Both clients encrypt and decrypt payloads with `unifiedCrypto` (exposed as `encryption.ucrypto` from the SDK). See [Encryption](/sdk/websdk/instant-messaging/encryption) for details.

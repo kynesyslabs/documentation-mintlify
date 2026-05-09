@@ -1,19 +1,72 @@
 ---
 title: "Message Types"
-description: "The Instant Messaging Protocol supports various message types:"
+description: "Wire-protocol message types for L2PSMessagingPeer (port 3006) and the legacy MessagingPeer (port 3005)."
 icon: "envelope"
 ---
-The Instant Messaging Protocol supports various message types:
 
-* "register": Register a new peer with the server
-* "discover": Request a list of all connected peers
-* "message": Encrypted peer-to-peer messages
-* "peer_disconnected": Notification when a peer disconnects
-* "request_public_key": Request a peer's public key
-* "public_key_response": Response containing a peer's public key
-* "server_question": Question from the server to a peer
-* "peer_response": Response from a peer to a server question
-* "debug_question": Debug message to trigger a server question
-* "error": Error notification with details
+# Message Types
 
+The two messaging clients use **completely different** wire protocols. Pick the section that matches the class you are using.
 
+## L2PSMessagingPeer protocol frames (port 3006)
+
+Every frame on this protocol carries `{ type, payload, timestamp, requestId? }`. The `requestId` correlates a server response with the client request that produced it.
+
+### Client → server
+
+| Type | Purpose |
+|------|---------|
+| `register` | Register this connection with `publicKey`, `l2psUid`, and a signed `proof` of `register:{publicKey}:{timestamp}`. |
+| `send` | Send an E2E encrypted message: `{ to, encrypted, messageHash }`. |
+| `history` | Fetch conversation history with a peer: `{ peerKey, before?, limit?, proof }` (signed `history:{peerKey}:{timestamp}`). |
+| `discover` | List online peers in the current L2PS network. |
+| `request_public_key` | Look up a peer's public key by identifier: `{ targetId }`. |
+| `ack` | Reserved for client-initiated acknowledgements. |
+
+### Server → client
+
+| Type | Purpose |
+|------|---------|
+| `registered` | Registration succeeded: `{ success, publicKey, l2psUid, onlinePeers }`. |
+| `message` | Incoming E2E encrypted message: `{ from, encrypted, messageHash, offline? }`. |
+| `message_sent` | Delivery confirmation for a `send`: `{ messageHash, l2psStatus: "submitted" \| "failed" }`. |
+| `message_queued` | Recipient was offline; message stored for later: `{ messageHash, status: "queued" }`. |
+| `history_response` | History page: `{ messages: StoredMessage[], hasMore }`. |
+| `discover_response` | List of online peer public keys: `{ peers: string[] }`. |
+| `public_key_response` | Lookup result: `{ targetId, publicKey: string \| null }`. |
+| `peer_joined` | A peer joined the L2PS network: `{ publicKey }`. |
+| `peer_left` | A peer left the L2PS network: `{ publicKey }`. |
+| `error` | Server-side error: `{ code, message, details? }`. |
+
+### `MessageStatus` (in `StoredMessage.status`)
+
+`delivered`, `queued`, `sent`, `failed`, `l2ps_pending`, `l2ps_batched`, `l2ps_confirmed`.
+
+### `ErrorCode` (in error frames)
+
+`INVALID_MESSAGE`, `REGISTRATION_REQUIRED`, `INVALID_PROOF`, `PEER_NOT_FOUND`, `L2PS_NOT_FOUND`, `L2PS_SUBMIT_FAILED`, `RATE_LIMITED`, `INTERNAL_ERROR`.
+
+### `MessageType` (in `MessageEnvelope.type`)
+
+`text`, `media`, `reaction`, `system`, `transfer`.
+
+---
+
+## MessagingPeer protocol (legacy, port 3005)
+
+The legacy signaling-server client uses a flat `{ type, payload }` envelope (`Message` interface). The `type` is one of:
+
+| Type | Purpose |
+|------|---------|
+| `register` | Register a new peer with the signaling server. |
+| `discover` | Request a list of all connected peers. |
+| `message` | Encrypted peer-to-peer message (relayed by the signaling server). |
+| `peer_disconnected` | Notification that a peer disconnected. |
+| `request_public_key` | Request a peer's public key. |
+| `public_key_response` | Response containing a peer's public key. |
+| `server_question` | A question sent from the server to a peer. |
+| `peer_response` | A peer's response to a server question. |
+| `debug_question` | Debug message used to trigger a server question. |
+| `error` | Error notification with `{ type, details }`. |
+
+This protocol does **not** include `history`, `message_sent`, `message_queued`, `peer_joined`, `peer_left`, or `ack` — those are L2PSMessagingPeer-only.
