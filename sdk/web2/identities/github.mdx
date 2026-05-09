@@ -1,122 +1,16 @@
 ---
 title: "Github"
-description: "You can associate your GitHub account with your DEMOS address using OAuth or gist-based verification."
+description: "You can associate your GitHub account with your DEMOS address using gist-based verification."
 icon: "github"
 ---
 
 # GitHub
 
-You can associate your GitHub account with your DEMOS address using one of two methods:
-
-1. **OAuth Flow** (Recommended) - Seamless authentication through the Key Server OAuth system
-2. **Gist-based Verification** - Manual proof creation via GitHub Gist
-
----
-
-## Method 1: OAuth Flow (Recommended)
-
-The OAuth flow provides a seamless user experience by authenticating through the Key Server, which handles the GitHub OAuth process and provides cryptographic attestation.
+You can associate your GitHub account with your DEMOS address by creating a public gist containing a cryptographic proof signed by your DEMOS wallet.
 
 <Info>
-For detailed information about the Key Server OAuth system, including attestation verification and error handling, see the [Key Server OAuth documentation](/sdk/web2/keyserver-oauth).
+The Key Server provides an OAuth-based GitHub verification flow ([`KeyServerClient.verifyOAuth("github", ...)`](/sdk/web2/keyserver-oauth)) that returns a signed attestation. Submitting that attestation as an on-chain identity is not currently exposed by the SDK — the previous `addGithubIdentityFromOAuth` method was reverted (SDK commit `67c5bc5`). For now, use the gist-based flow below.
 </Info>
-
-### 1. Verify GitHub Account Ownership
-
-Use the `KeyServerClient` to verify the user owns a GitHub account:
-
-```typescript
-import { Demos } from "@kynesyslabs/demosdk/websdk";
-import { KeyServerClient } from "@kynesyslabs/demosdk/keyserver";
-
-const demos = new Demos();
-await demos.connect("https://node2.demos.sh");
-
-const client = new KeyServerClient({
-    endpoint: "https://node2.demos.sh",
-    nodePubKey: "node_public_key_hex",
-});
-
-// Complete OAuth verification with optional wallet binding
-const result = await client.verifyOAuth("github", {
-    onAuthUrl: (url) => {
-        // Open GitHub authorization in a popup
-        window.open(url, "github-oauth", "width=600,height=700");
-    },
-    onPoll: (attempt, status) => {
-        console.log(`Verification status: ${status}`);
-    },
-    timeout: 300000, // 5 minutes
-    // Optional: Bind wallet address to this verification for sybil resistance
-    walletBinding: async (state) => {
-        const message = `demos-oauth-bind:${state}`;
-        const signature = await wallet.signMessage(message);
-        return { address: wallet.address, signature, signatureType: "evm" };
-    },
-});
-
-console.log("Verified user:", result.user.username);
-console.log("Provider ID:", result.user.providerId);
-```
-
-### 2. Submit Identity Transaction
-
-After successful verification, use the attestation to create an identity transaction:
-
-```typescript
-import { Identities } from "@kynesyslabs/demosdk/abstraction";
-
-await demos.connectWallet(mnemonic);
-
-const identities = new Identities();
-const validityData = await identities.addGithubIdentityFromOAuth(
-    demos,
-    {
-        attestation: {
-            provider: "github",
-            userId: result.user.providerId,
-            username: result.user.username,
-            timestamp: result.user.verifiedAt,
-            nodePublicKey: result.attestation.metadata.nodePubKey
-        },
-        signature: result.attestation.signature.data,
-        signatureType: "ed25519"
-    }
-);
-
-if (validityData.result === 200) {
-    const res = await demos.broadcast(validityData);
-    console.log(res);
-}
-```
-
-### 3. Verify Attestation (Optional)
-
-You can cryptographically verify the attestation before submitting:
-
-```typescript
-import { verifyOAuthAttestation } from "@kynesyslabs/demosdk/keyserver";
-
-const verification = verifyOAuthAttestation(result, KNOWN_KEY_SERVER_PUBKEY);
-
-if (!verification.valid) {
-    throw new Error(`Invalid attestation: ${verification.reason}`);
-}
-```
-
-<Info>
-The OAuth attestation is cryptographically signed by the Key Server, ensuring the identity verification is authentic. See [Attestation Verification](/sdk/web2/keyserver-oauth#attestation-verification) for details.
-</Info>
-
-<Tip>
-Use [Wallet Binding](/sdk/web2/keyserver-oauth#wallet-binding) to cryptographically link the OAuth identity to a specific wallet address. This provides sybil resistance by proving the user owns both the social account and the wallet.
-</Tip>
-
----
-
-## Method 2: Gist-based Verification
-
-This method requires manually creating a public gist containing a cryptographic proof.
 
 ### 1. Connect your wallet
 
@@ -251,11 +145,3 @@ A successful transaction response should look like this:
 }
 ```
 
-## Comparison of Methods
-
-| Feature | OAuth Flow | Gist-based |
-|---------|-----------|------------|
-| User Experience | Seamless, one-click | Manual gist creation |
-| Cryptographic Attestation | DAHR attestation with signature | Proof in gist |
-| Verification Speed | Instant | Requires gist fetch |
-| Best For | Production apps | Development/testing |

@@ -1,121 +1,283 @@
 ---
 title: "Nodecalls"
-description: "In DEMOS, a NodeCall is a request that reads the blockchain state. NodeCall methods on the WebSDK are denoted by the \"get\" prefix. eg. `getLastBlockNu..."
+description: "Read blockchain state via the WebSDK's get* methods. Covers blocks, transactions, addresses, validators, governance, fork detection, and message signing."
 icon: "phone"
 ---
 
 # NodeCalls
 
-In DEMOS, a NodeCall is a request that reads the blockchain state. NodeCall methods on the WebSDK are denoted by the "get" prefix. eg. `getLastBlockNumber`
+A NodeCall is a request that reads blockchain state from a connected DEMOS node. NodeCall methods on the `Demos` class are denoted by the `get` prefix (e.g. `getLastBlockNumber`).
+
+All methods below assume you have an initialized, connected `Demos` instance:
+
+```typescript
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+
+const demos = new Demos()
+await demos.connect("https://node2.demos.sh")
+// Some methods (e.g. signMessage, broadcastAndWait) additionally need a wallet:
+// await demos.connectWallet(mnemonic)
+```
 
 ## Blocks
 
 ### Get last block number
 
-Retrieves the number of the latest block in the blockchain.
+Returns the height of the chain tip.
 
 ```typescript
 const blockNo = await demos.getLastBlockNumber()
-console.log("Last block No: ", blockNo)
 ```
 
 ### Get last block hash
 
-Retrieves the hash of the latest block in the blockchain.
+Returns the hash of the chain tip.
 
 ```typescript
-const latestBlockHash = await demos.getLastBlockHash();
-console.log("Latest block hash:", latestBlockHash);
+const hash = await demos.getLastBlockHash()
 ```
 
 ### Get block by number
 
-Retrieves a block by its number.
-
 ```typescript
-const blockNumber = 1000;
-const blockData = await demos.getBlockByNumber(blockNumber);
-console.log("Block data:", blockData);
+const block = await demos.getBlockByNumber(1000)
 ```
 
 ### Get block by hash
 
-Retrieves a block by its hash.
-
 ```typescript
-const blockHash = "0x1234...";
-const blockData = await demos.getBlockByHash(blockHash);
-console.log("Block data:", blockData);
+const block = await demos.getBlockByHash("0x1234...")
 ```
 
+### Get a range of blocks
 
+`getBlocks(start, limit)` — fetch up to `limit` blocks starting at `start`. Pass `"latest"` for the head:
+
+```typescript
+const recent = await demos.getBlocks("latest", 10)
+const fromBlock = await demos.getBlocks(50_000, 100)
+```
 
 ## Transactions
 
 ### Get transaction by hash
 
-Retrieves a transaction by its hash.
-
 ```typescript
-const txHash = "0xabcd...";
-const txData = await demos.getTxByHash(txHash);
-console.log("Transaction data:", txData);
+const tx = await demos.getTxByHash("0xabcd...")
 ```
 
-### Get all transactions
+### Get a transaction page
 
-Retrieves all transactions in the blockchain.
+`getTransactions(start, limit)` — paginated listing across the chain. Replaces the deprecated `getAllTxs()`. Accepts `"latest"` or a block number for `start`.
 
 ```typescript
-const allTransactions = await demos.getAllTxs();
-console.log("All transactions:", allTransactions);
+const txs = await demos.getTransactions("latest", 100)
 ```
 
+<Warning>
+`getAllTxs()` is **deprecated** in v3.x and will be removed in a future major. Use `getTransactions(start, limit)` instead.
+</Warning>
 
+### Get an address's transaction history
+
+```typescript
+const history = await demos.getTransactionHistory(
+    address,
+    "all",                // type filter: "all" | "sent" | "received" | ...
+    { limit: 50, offset: 0 },
+)
+```
+
+### Wait for a transaction to land
+
+`broadcastAndWait(validityData, opts?)` (added in v2.12) broadcasts and then polls `getTransactionStatus` until the transaction reaches a terminal state. See [Broadcasting a Transaction](/sdk/websdk/transactions/broadcasting-a-transaction#broadcast-and-wait-for-inclusion) for the full reference, including `BroadcastTimeoutError` and `BroadcastFailedError` handling.
+
+```typescript
+const validityData = await demos.confirm(tx)
+const { broadcast, status } = await demos.broadcastAndWait(validityData, {
+    timeoutMs: 30_000,
+    pollIntervalMs: 500,
+})
+console.log(status.state, status.blockNumber)
+```
 
 ## Addresses
 
 ### Get address info
 
-Retrieves information about a specific address on the blockchain.
+Returns balance and metadata for an address. **In v3+ the `balance` field is a `bigint` in OS** (1 DEM = 10⁹ OS). See [Amounts & Denominations](/sdk/websdk/transactions/denominations) for conversion helpers.
 
 ```typescript
-const address = "0x1234...";
-const addressInfo = await demos.getAddressInfo(address);
-console.log("Address info:", addressInfo);
+import { denomination } from "@kynesyslabs/demosdk"
+
+const info = await demos.getAddressInfo(address)
+console.log("balance (OS):", info.balance)                       // bigint
+console.log("balance (DEM):", denomination.osToDem(info.balance)) // string
 ```
 
+### Get address nonce
 
+Used when constructing storage program payloads (and other nonce-sensitive operations).
+
+```typescript
+const nonce = await demos.getAddressNonce(address)
+```
 
 ## Peer information
 
 ### Get node identity
 
-Retrieves the identity information of the connected node.
-
 ```typescript
-const peerIdentity = await demos.getPeerIdentity();
-console.log("Peer identity:", peerIdentity);
+const identity = await demos.getPeerIdentity()
 ```
 
 ### Get peer list
 
-Retrieves the list of peers connected to the RPC node.
-
 ```typescript
-const peerList = await demos.getPeerlist();
-console.log("Peer list:", peerList);
+const peers = await demos.getPeerlist()
 ```
 
-### Get Mempool
-
-Retrieves the current mempool (pending transactions) of the node.
+### Get mempool
 
 ```typescript
-const mempool = await demos.getMempool();
-console.log("Mempool:", mempool);
+const pending = await demos.getMempool()
+```
+
+## Validators
+
+### List validators
+
+```typescript
+// Active validator set as of the chain tip.
+const validators = await demos.getValidators()
+
+// Or as of a specific block height (historical snapshot).
+const snapshot = await demos.getValidators(12345)
+```
+
+### Get a single validator
+
+```typescript
+const v = await demos.getValidatorInfo(address)
+// v: ValidatorInfo | null
+// includes status, stake, unstake_requested_at, unstake_available_at
+```
+
+### Get a validator's staked amount
+
+Returns the staked amount as a bigint-encoded string in OS.
+
+```typescript
+const stakedOs = await demos.getStakedAmount(address)
+```
+
+See [Validator Staking](/sdk/websdk/validator-staking/overview) for the corresponding `stake` / `unstake` / `validatorExit` write-side methods.
+
+## Network parameters & governance
+
+These methods read the live state of network governance — the parameters validators have voted into effect, plus the proposals currently in flight.
+
+### Get current network parameters
+
+Returns the live `networkFee`, `rpcFee`, `minValidatorStake`, etc. Cached per RPC URL with a 30-second TTL.
+
+```typescript
+const params = await demos.getNetworkParameters()
+// params: NetworkParameters | null
+```
+
+### Get fork-activation status (`getNetworkInfo`)
+
+Introduced in v3.0 for [sub-DEM denomination](/sdk/websdk/transactions/denominations) detection. Returns the activation state of every known fork on the connected node.
+
+```typescript
+const info = await demos.getNetworkInfo()
+// info: NetworkInfo | null
+// {
+//   forks: {
+//     osDenomination: { activationHeight, activated, currentHeight }
+//   }
+// }
+```
+
+The result is cached on the `Demos` instance. On RPC failure the SDK assumes pre-fork wire format and emits a one-time warning. You don't normally need to call this yourself — `transfer`/`pay`/`sign` consult the cached fork status automatically.
+
+### List active proposals
+
+```typescript
+const proposals = await demos.getActiveProposals()
+// proposals: NetworkUpgradeProposal[]
+```
+
+### Get votes for a proposal
+
+```typescript
+const votes = await demos.getProposalVotes(proposalId)
+// votes: ProposalVoteInfo | null
+```
+
+### Get the upgrade history
+
+Activated proposals, ordered.
+
+```typescript
+const history = await demos.getUpgradeHistory()
+```
+
+See [Network Governance](/sdk/websdk/governance/overview) for the corresponding `proposeNetworkUpgrade` / `voteOnUpgrade` write-side methods.
+
+## Storage Programs
+
+The SDK exposes one read shortcut for storage programs — `demos.storagePrograms.read(address)`. The other 8 storage RPCs (listing, search, field-level lookup) are reachable via `demos.rpcCall(...)`. See [Storage Programs RPC Queries](/sdk/storage-programs/rpc-queries) for the full reference.
+
+```typescript
+const result = await demos.storagePrograms.read("stor-...")
+// result: StorageProgramResponse with top-level data, metadata, owner, etc.
+```
+
+## Message signing & verification
+
+Sign and verify arbitrary messages (independent of transactions). Algorithm defaults to the wallet's connection algorithm; override with `options.algorithm`.
+
+```typescript
+const { type, data: signature } = await demos.signMessage("hello", {
+    algorithm: "ed25519", // optional; defaults to wallet algorithm
+})
+
+const ok = await demos.verifyMessage(
+    "hello",
+    signature,
+    publicKeyHex,
+    { algorithm: "ed25519" },
+)
+```
+
+## Web2 nodecalls
+
+The `web2` namespace fetches off-chain content via the node's proxy (DAHR). See [Web2 Integration](/sdk/web2/overview) and [DAHR API Reference](/sdk/web2/dahr-api-reference/overview) for the full surface.
+
+```typescript
+const tweet = await demos.web2.getTweet("https://x.com/user/status/...")
+const msg = await demos.web2.getDiscordMessage("https://discord.com/channels/...")
+const dahr = await demos.web2.createDahr() // creates a DAHR client
+```
+
+## IPFS quote
+
+`demos.ipfs.quote(fileSizeBytes, operation, durationBlocks)` returns the cost estimate (in OS post-fork) for an IPFS operation (`"ADD"` | `"PIN"` | `"UNPIN"`). The estimate is fork-aware.
+
+```typescript
+const costOs = await demos.ipfs.quote(1024 * 1024, "ADD", 100_000)
+```
+
+## TLSNotary
+
+`demos.tlsnotary(config?)` lazily initializes a TLSNotary client for HTTPS attestations. See [TLSNotary](/sdk/web2/tlsnotary/overview) for the full flow.
+
+```typescript
+const tlsn = await demos.tlsnotary()
 ```
 
 ### API Reference
 
-[https://kynesyslabs.github.io/demosdk-api-ref/variables/websdk.demos.html](https://kynesyslabs.github.io/demosdk-api-ref/variables/websdk.demos.html)
+[https://kynesyslabs.github.io/demosdk-api-ref/classes/websdk.Demos.html](https://kynesyslabs.github.io/demosdk-api-ref/classes/websdk.Demos.html)

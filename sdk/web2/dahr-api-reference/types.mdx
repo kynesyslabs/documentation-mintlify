@@ -32,7 +32,7 @@ interface IStartProxyParams {
 
 ### Response Types
 
-`txHash` is added by the SDK after confirm/broadcast; node responses may omit it. Only hashes (dataHash, headersHash) are stored on-chain; not the full response.
+`txHash` is added by the SDK after confirm/broadcast; node responses may omit it. Only hashes (`responseHash`, `responseHeadersHash`) are stored on-chain; not the full response.
 
 Response type from `startProxy`:
 
@@ -65,7 +65,7 @@ const response = await dahr.startProxy({
 
 // HTTP response + hashes + tx hash (returned by SDK)
 console.log(res.status, res.statusText)
-console.log(res.dataHash, res.responseHeadersHash)
+console.log(res.responseHash, res.responseHeadersHash)
 console.log(res.txHash) // can be verified on-chain
 
 // Verify on-chain (optional)

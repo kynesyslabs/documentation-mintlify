@@ -35,13 +35,31 @@ import { Identities } from "@kynesyslabs/demosdk/abstraction"
 
 const identities = new Identities()
 
-// You can also pass a list of pqc algorithms. eg. ["falcon"]
+// Bind every supported PQC algorithm to the connected ed25519 address.
 const validityData = await identities.bindPqcIdentity(demos, "all")
 const res = await demos.broadcast(validityData)
 
 console.log(res)
 ```
 
+You can also bind a specific subset of algorithms by passing a `PQCAlgorithm[]` array instead of `"all"`:
 
+```typescript
+// Bind only Falcon, leaving ML-DSA unbound.
+await identities.bindPqcIdentity(demos, ["falcon"])
+```
 
 For future wallet connections, you can connect your wallet without the `dual_sign` option. Transactions will not have the ed25519 signature and your ownership of the ed25519 address will be validated on the network.
+
+### Removing PQC identities
+
+To unbind PQC identities, use `removePqcIdentity`. It mirrors the binding shape — pass `"all"` to remove every algorithm, or a `PQCAlgorithm[]` to remove a subset.
+
+```typescript
+// Remove every PQC algorithm bound to the connected address.
+const validityData = await identities.removePqcIdentity(demos, "all")
+await demos.broadcast(validityData)
+
+// Or remove just one algorithm.
+await identities.removePqcIdentity(demos, ["falcon"])
+```

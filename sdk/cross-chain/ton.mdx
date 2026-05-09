@@ -57,7 +57,7 @@ const address = instance.getAddress()
 Now you can create a signed TON transfer transaction.
 
 ```ts
-const tx = await instance.prepareTransfer(
+const tx = await instance.preparePay(
     "EQCD39VS5jcptHL8vMjEXrzGaRcCVYto7HUn4bpAOg8xqB2N",
     "1",
 )
@@ -67,7 +67,7 @@ The `tx` will be a signed [BOC](https://docs.ton.org/develop/data-formats/cell-b
 
 ### Creating multiple transactions
 
-You can create multiple transfer transactions using the `prepareTransfers` method.
+You can create multiple transfer transactions using the `preparePays` method.
 
 ```ts
 const transfers = [
@@ -81,7 +81,7 @@ const transfers = [
     },
 ]
 
-const txs = await instance.prepareTransfers(transfers)
+const txs = await instance.preparePays(transfers)
 ```
 
 ### Signing Messages

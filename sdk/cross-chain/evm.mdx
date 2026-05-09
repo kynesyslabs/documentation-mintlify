@@ -132,20 +132,29 @@ expect(verified).toBe(true)
 
 ### Working with smart contracts
 
-The SDK provides methods to interact with smart contracts:
+The SDK provides methods to interact with smart contracts. Note that `abi` must be passed as a **JSON string**, not a JavaScript array — pass it through `JSON.stringify(abi)` if you have it as an array.
 
 ```ts
 const contractAddress = "0x..."
-const abi = [...] // Contract ABI
+const abi = JSON.stringify([/* contract ABI */])
 
 const contract = await instance.getContractInstance(contractAddress, abi)
 
 // Read from contract
 const result = await instance.readFromContract(contract, "functionName", [arg1, arg2])
 
-// Write to contract
-await instance.writeToContract(contract, "functionName", [arg1, arg2])
+// Write to contract — returns the signed-and-broadcast tx hash as a string
+const txHash = await instance.writeToContract(
+    contract,
+    "functionName",
+    [arg1, arg2],
+    { gasLimit: 200_000, value: "0.01" }, // optional; value is in ETH (parsed via parseEther)
+)
 ```
+
+`readFromContract(contract, fnName, args)` calls a view/pure function and returns the raw return value.
+
+`writeToContract(contract, fnName, args, options?)` builds, signs, and broadcasts a state-changing transaction. The optional fourth argument accepts `{ gasLimit?: number; value?: string }` — `value` is the ETH amount as a decimal string and is parsed via `parseEther`.
 
 ### Listening for events (Not implemented)
 

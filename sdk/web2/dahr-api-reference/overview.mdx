@@ -54,8 +54,9 @@ export interface IWeb2Result {
   statusText: string
   headers: IncomingHttpHeaders
   data: any
-  dataHash: string
-  headersHash: string
+  responseHash: string         // SHA-256 of response body
+  responseHeadersHash: string  // SHA-256 of response headers
+  requestHash?: string
   txHash?: string
 }
 ```

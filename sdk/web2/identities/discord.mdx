@@ -1,122 +1,16 @@
 ---
 title: "Discord"
-description: "You can associate your Discord account with your DEMOS address using OAuth or message-based verification."
+description: "You can associate your Discord account with your DEMOS address using message-based verification."
 icon: "discord"
 ---
 
 # Discord
 
-You can associate your Discord account with your DEMOS address using one of two methods:
-
-1. **OAuth Flow** (Recommended) - Seamless authentication through the Key Server OAuth system
-2. **Message-based Verification** - Manual proof posting in a Discord channel
-
----
-
-## Method 1: OAuth Flow (Recommended)
-
-The OAuth flow provides a seamless user experience by authenticating through the Key Server, which handles the Discord OAuth process and provides cryptographic attestation.
+You can associate your Discord account with your DEMOS address by posting a cryptographic proof in a Discord channel where the DEMOS bot has access.
 
 <Info>
-For detailed information about the Key Server OAuth system, including attestation verification and error handling, see the [Key Server OAuth documentation](/sdk/web2/keyserver-oauth).
+The Key Server provides an OAuth-based Discord verification flow ([`KeyServerClient.verifyOAuth("discord", ...)`](/sdk/web2/keyserver-oauth)) that returns a signed attestation. Submitting that attestation as an on-chain identity is not currently exposed by the SDK — the previous `addDiscordIdentityFromOAuth` method was reverted (SDK commit `67c5bc5`). For now, use the message-based flow below.
 </Info>
-
-### 1. Verify Discord Account Ownership
-
-Use the `KeyServerClient` to verify the user owns a Discord account:
-
-```typescript
-import { Demos } from "@kynesyslabs/demosdk/websdk";
-import { KeyServerClient } from "@kynesyslabs/demosdk/keyserver";
-
-const demos = new Demos();
-await demos.connect("https://node2.demos.sh");
-
-const client = new KeyServerClient({
-    endpoint: "https://node2.demos.sh",
-    nodePubKey: "node_public_key_hex",
-});
-
-// Complete OAuth verification with optional wallet binding
-const result = await client.verifyOAuth("discord", {
-    onAuthUrl: (url) => {
-        // Open Discord authorization in a popup
-        window.open(url, "discord-oauth", "width=600,height=700");
-    },
-    onPoll: (attempt, status) => {
-        console.log(`Verification status: ${status}`);
-    },
-    timeout: 300000, // 5 minutes
-    // Optional: Bind wallet address to this verification for sybil resistance
-    walletBinding: async (state) => {
-        const message = `demos-oauth-bind:${state}`;
-        const signature = await wallet.signMessage(message);
-        return { address: wallet.address, signature, signatureType: "evm" };
-    },
-});
-
-console.log("Verified user:", result.user.username);
-console.log("Provider ID:", result.user.providerId);
-```
-
-### 2. Submit Identity Transaction
-
-After successful verification, use the attestation to create an identity transaction:
-
-```typescript
-import { Identities } from "@kynesyslabs/demosdk/abstraction";
-
-await demos.connectWallet(mnemonic);
-
-const identities = new Identities();
-const validityData = await identities.addDiscordIdentityFromOAuth(
-    demos,
-    {
-        attestation: {
-            provider: "discord",
-            userId: result.user.providerId,
-            username: result.user.username,
-            timestamp: result.user.verifiedAt,
-            nodePublicKey: result.attestation.metadata.nodePubKey
-        },
-        signature: result.attestation.signature.data,
-        signatureType: "ed25519"
-    }
-);
-
-if (validityData.result === 200) {
-    const res = await demos.broadcast(validityData);
-    console.log(res);
-}
-```
-
-### 3. Verify Attestation (Optional)
-
-You can cryptographically verify the attestation before submitting:
-
-```typescript
-import { verifyOAuthAttestation } from "@kynesyslabs/demosdk/keyserver";
-
-const verification = verifyOAuthAttestation(result, KNOWN_KEY_SERVER_PUBKEY);
-
-if (!verification.valid) {
-    throw new Error(`Invalid attestation: ${verification.reason}`);
-}
-```
-
-<Info>
-The OAuth attestation is cryptographically signed by the Key Server, ensuring the identity verification is authentic. See [Attestation Verification](/sdk/web2/keyserver-oauth#attestation-verification) for details.
-</Info>
-
-<Tip>
-Use [Wallet Binding](/sdk/web2/keyserver-oauth#wallet-binding) to cryptographically link the OAuth identity to a specific wallet address. This provides sybil resistance by proving the user owns both the social account and the wallet.
-</Tip>
-
----
-
-## Method 2: Message-based Verification
-
-This method requires manually posting a cryptographic proof in a Discord channel where the DEMOS bot has access.
 
 ### 1. Connect your wallet
 
@@ -265,11 +159,3 @@ The following Discord URL formats are supported for message-based verification:
 3. Canary: `https://canary.discord.com/channels/{guildId}/{channelId}/{messageId}`
 4. Legacy domain: `https://discordapp.com/channels/{guildId}/{channelId}/{messageId}`
 
-## Comparison of Methods
-
-| Feature | OAuth Flow | Message-based |
-|---------|-----------|---------------|
-| User Experience | Seamless, one-click | Manual message posting |
-| Cryptographic Attestation | DAHR attestation with signature | Proof in message |
-| Bot Requirement | Not required | Bot must be in server |
-| Best For | Production apps | Development/testing |
