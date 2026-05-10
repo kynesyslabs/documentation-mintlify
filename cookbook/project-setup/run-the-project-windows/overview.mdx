@@ -49,9 +49,9 @@ The first run pulls images and builds the node container, which can take a few m
 
 When the stack is healthy (browse from Windows; ports forward through Docker Desktop):
 
-- Node RPC: <http://localhost:53550> — try `curl http://localhost:53550/info` from the WSL shell
-- Grafana: <http://localhost:3000> (default `admin` / `demos`)
-- Prometheus: <http://localhost:9091>
+- Node RPC: `http://localhost:53550` — try `curl http://localhost:53550/info` from the WSL shell
+- Grafana: `http://localhost:3000` (default `admin` / `demos`)
+- Prometheus: `http://localhost:9091`
 
 <Tip>
 Clone the repo **inside the WSL 2 filesystem** (e.g. `~/node`), not under `/mnt/c/...`. WSL 2's Linux filesystem is dramatically faster for builds and Docker bind mounts than the Windows-mounted drive.
