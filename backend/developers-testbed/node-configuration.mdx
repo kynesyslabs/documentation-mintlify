@@ -1,45 +1,166 @@
 ---
 title: "Node Configuration"
-description: "Demos nodes use a `.env` file and a few additional configuration files to provide a customizable and replicable setup."
+description: "Reference for the `.env` variables consumed by a Demos node, with the differences between Track 1 (Docker Compose) and Track 2 (bare metal `./run`) called out."
 icon: "gear"
 ---
-#### Environment
 
-Demos nodes use a `.env` file and a few additional configuration files to provide a customizable and replicable setup.
-For convenience, a precompiled `.env` file is already included.
+# Node configuration
 
-In most cases, you won't need to edit it — just double-check that the listed ports are free on your system.
-Besides the ones listed, Demos nodes also launch a Postgres Docker container that listens by default on port **5332** (you'll see how to change this in the next chapter).
+A Demos node is configured almost entirely from a single `.env` file. The repo ships `.env.example` as the canonical template:
 
-> **Note**: You don't need to configure the Twitter and GitHub sections of the `.env` yet, even if they are present depending on the branch.
+```bash
+cp .env.example .env
+# edit .env to override anything you need
+```
 
----
+The defaults are tuned for the **Track 1 (Docker Compose, recommended)** flow. If you are running **Track 2 (bare metal `./run`, advanced)**, two settings differ — see [Track-specific overrides](#track-specific-overrides) below.
 
-#### Keys
+<Warning>
+Old docs referenced `RPC_FEE=5` and `SERVER_PORT`. Both are wrong. The current names are `RPC_PORT` for the listen port and `RPC_FEE` (default `1`, paired with `NETWORK_FEE=1` and `BURN_FEE=1` for a per-tx total of `3`).
+</Warning>
 
-To generate your initial keypair, simply run:
+## Track-specific overrides
 
-`./run`
+| Variable | Track 1 (Docker Compose) | Track 2 (bare metal `./run`) |
+|----------|--------------------------|--------------------------------|
+| `PG_HOST` | `postgres` (in-network service name) | `localhost` |
+| `PG_PORT` | `5432` (container-internal) | `5332` (host-mapped from the sidecar) |
+| `TLSNOTARY_HOST` | `tlsnotary` (in-network service name) | `localhost` |
 
-The node will crash due to a missing peerlist (expected at this stage), but it will create a file named like `publickey_1234567890` inside your `node` directory.
-Inside that file, you'll find your **public key**.
+Everything else in `.env` is shared between the two tracks.
 
----
+## Consensus and governance
 
-#### Peerlist
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `CONSENSUS_TIME` | `10` | Block production interval in seconds. Lower = faster blocks, higher CPU. |
+| `RPC_FEE` | `1` | Per-tx fee component. |
+| `NETWORK_FEE` | `1` | Per-tx fee component. |
+| `BURN_FEE` | `1` | Per-tx fee component (burned). Total per-tx flat fee = `RPC_FEE + NETWORK_FEE + BURN_FEE`. |
+| `MIN_VALIDATOR_STAKE` | `1000000000000000000` | Minimum stake to become a validator (raw bigint as string, must fit Postgres int64 ≤ 9.2e18). |
 
-Demos nodes use a `demos_peerlist.json` file to define peers.
-First, create it by copying the example file:
+These values are the chain's bootstrap defaults at genesis. Governance proposals can override them at runtime — see [Network Governance](/backend/network-governance/overview).
 
-`cp demos_peerlist.example.json demos_peerlist.json`
+## Network and ports
 
-Then open it with your favorite text editor.
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `RPC_PORT` | `53550` | Main HTTP RPC listen port. |
+| `EXPOSED_URL` | `http://localhost:53550` | Public URL advertised to peers and SDK clients. **Loopback default is fine for local dev — set to your reachable address before joining a real network.** |
+| `OMNI_ENABLED` | `true` | Toggle the OmniProtocol binary RPC server. |
+| `OMNI_PORT` | `53551` | OmniProtocol TCP server port (auto-derived as `RPC_PORT + 1` if unset). |
+| `OMNI_MODE` | `OMNI_PREFERRED` | One of `HTTP_ONLY`, `OMNI_PREFERRED`, `OMNI_ONLY`. |
+| `RPC_SIGNALING_PORT` | `3005` | WebRTC signaling server port (peer discovery handshake for legacy MessagingPeer). |
+| `RPC_MCP_PORT` | `3001` | MCP (Model Context Protocol) server port for AI agent integrations. |
 
-* **Solo mode (local testing)**:
-  Replace the `identity` key with your generated public key.
-*   **Connecting to other nodes**:
-    Add lines in the following format:
+<Warning>
+If you set `EXPOSED_URL` to a public IP or DNS name, also open inbound TCP for `RPC_PORT` (53550), `OMNI_PORT` (53551), and `7047` (TLSNotary, if enabled) on your firewall *before* peers start trying to reach you. Do **not** expose `5432` / `5332` (Postgres), `9090` (node metrics), `9091` (Prometheus), or `3000` (Grafana) to the public internet.
+</Warning>
 
-    `"1234567890...": "http://url:port"`
+## Database (PostgreSQL)
 
-Replace `1234567890...` with the actual public key of the peer and `http://url:port` with its URL.
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `PG_HOST` | `postgres` | Track 1: in-network service name. Track 2: set to `localhost`. |
+| `PG_PORT` | `5432` | Track 1: container-internal. Track 2: set to `5332` (the host-mapped port the `./run` sidecar uses). |
+| `PG_USER` | `demosuser` | |
+| `PG_PASSWORD` | `demospassword` | Change before sharing the host. |
+| `PG_DATABASE` | `demos` | |
+
+See [Browsing the Postgres DB via psql](/backend/miscellaneous/browsing-the-postgres-db-via-psql) for connection commands per track.
+
+## Identity and peers
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `IDENTITY_FILE` | `.demos_identity` | Path to the node's ed25519 identity keypair. Auto-generated on first boot. Under Track 1 the entrypoint persists this into `demos_node_state` so it survives container recreation. |
+| `PEER_LIST_FILE` | `demos_peerlist.json` | Cached peer list. Same persistence treatment as the identity file. |
+
+See [Backing up and restoring a node](/backend/miscellaneous/backing-up-and-restoring-a-node) — `.demos_identity` is the single most important file to back up.
+
+## TLSNotary
+
+TLSNotary provides cryptographic attestation of HTTPS responses.
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `TLSNOTARY_ENABLED` | `true` | Set to `false` to skip TLSNotary entirely. |
+| `TLSNOTARY_HOST` | `tlsnotary` | Track 1: in-network service name. Track 2: set to `localhost`. |
+| `TLSNOTARY_PORT` | `7047` | Attestation server port. |
+| `TLSNOTARY_MODE` | `docker` | `docker` (sidecar container) or `ffi` (in-process Rust binding). |
+| `TLSNOTARY_FATAL` | `false` | If `true`, TLSNotary failures crash the node. Keep `false` for graceful degradation. |
+| `TLSNOTARY_SIGNING_KEY` | _(empty)_ | **Leave empty in default Docker mode** — the sidecar manages its own key. Only set when `TLSNOTARY_MODE=ffi` (64-char hex secp256k1 key, or empty to auto-generate into `.tlsnotary-key`). |
+
+Under Track 1, keep `TLSNOTARY_ENABLED` aligned with the `tlsnotary` profile in `COMPOSE_PROFILES` — enabling one without the other produces noisy warnings.
+
+## Monitoring
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `METRICS_ENABLED` | `true` | Exposes Prometheus metrics at `http://<node>:<METRICS_PORT>/metrics`. |
+| `METRICS_PORT` | `9090` | Container-internal port. Pinned to `9090` in compose to match the static scrape target in `monitoring/prometheus/prometheus.yml`. Override only on bare metal. |
+| `METRICS_HOST` | `0.0.0.0` | Bind address. |
+| `METRICS_HOST_PORT` | `9090` | Host-mapped port for the metrics endpoint (Track 1 only). Set this if `9090` is already taken on the host. |
+| `GRAFANA_PORT` | `3000` | Dashboard UI port. |
+| `GRAFANA_ADMIN_USER` | `admin` | |
+| `GRAFANA_ADMIN_PASSWORD` | `demos` | **Change this** before opening Grafana to anything outside your machine. |
+| `PROMETHEUS_PORT` | `9091` | Prometheus server external (host-mapped) port. Internal stays `9090`. |
+
+## Logging and runtime
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `LOG_LEVEL` | `info` | One of `debug`, `info`, `warning`, `error`, `critical`. `debug` produces a wall of per-block consensus JSON — only enable when actually debugging. |
+| `PROD` | `false` | Set `true` in production (enables DTR production relay and prod-only safety checks). |
+| `L2PS_ZK_ENABLED` | `false` | Advanced: enable ZK proofs in the L2PS layer. Experimental. |
+
+## Docker Compose only
+
+These variables are consumed by `docker-compose.yml` and **not** by the node binary itself, so they only matter on Track 1.
+
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `COMPOSE_PROFILES` | `monitoring,tlsnotary` | Comma-separated list of profiles to bring up. Empty = bare minimum (postgres + node). Other profiles: `full` (adds `node-exporter` for host metrics), `neo4j` (only for CGC/KYC features). |
+| `IMAGE_NAME` | `demos-node` | Image name. Override to pull a pre-built image (e.g. `ghcr.io/kynesyslabs/node`). |
+| `IMAGE_TAG` | `local` | Image tag. |
+
+## Optional external API keys
+
+`.env.example` ships with these commented out. Uncomment only the ones you need; each unlocks a specific feature:
+
+| Variable | Used by |
+|----------|---------|
+| `SOLANA_RPC` | Solana RPC endpoint override (default: public mainnet RPC) |
+| `ETHERSCAN_API_KEY` | EVM block explorer queries |
+| `HELIUS_API_KEY` | Solana enhanced RPC (NFTs, DAS API) |
+| `NOMIS_API_KEY` / `NOMIS_CLIENT_ID` | On-chain reputation scoring |
+| `RAPID_API_KEY` | Various enrichment routes |
+| `GITHUB_TOKEN` | GitHub-based identity attestations |
+| `DISCORD_BOT_TOKEN` | Discord-based identity attestations |
+| `HUMAN_PASSPORT_API_KEY` | Sybil resistance scoring (Gitcoin Passport) |
+
+## Generating your identity
+
+You do not configure the node's keypair manually. On first boot the node:
+
+1. Generates a fresh ed25519 keypair.
+2. Writes the private key to `IDENTITY_FILE` (default `.demos_identity`).
+3. Writes the public key to a file named `publickey_<timestamp>` in the same directory and prints it to the console.
+
+For the exact first-boot procedure on each track, see [Running the node](/backend/developers-testbed/running-the-node).
+
+## Configuring the peerlist
+
+`demos_peerlist.json` lists known peers as `{ "<publicKey>": "<url>" }`. Copy the example and edit it:
+
+```bash
+cp demos_peerlist.json.example demos_peerlist.json
+```
+
+```jsonc
+{
+  "0xd0b2be2cb6d...": "https://node2.example.network"
+}
+```
+
+For solo / local dev, the file can stay empty (or contain only your own entry). To join an existing network, seed it with at least one known bootstrap peer — see [Joining the testnet using a custom genesis](/backend/miscellaneous/joining-the-testnet-using-a-custom-genesis) for the full procedure.

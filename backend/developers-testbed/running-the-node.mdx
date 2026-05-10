@@ -1,48 +1,261 @@
 ---
 title: "Running The Node"
-description: "If you made it this far, you're just one step away from running your very own Demos node!"
+description: "Start, stop, and operate a Demos node — Track 1 (Docker Compose, recommended) or Track 2 (bare metal `./run`, advanced)."
 icon: "play"
 ---
+
 # Running the node
 
-If you made it this far, you're just one step away from running your very own Demos node!
+There are two supported ways to run a Demos node:
 
----
+- **Track 1 — Docker Compose (recommended).** Single-command bring-up of the full stack: node + Postgres + TLSNotary + monitoring. Pick this unless you have a specific reason not to.
+- **Track 2 — bare metal `./run` (advanced).** Node binary runs natively on the host via Bun; only Postgres lives in a sidecar container managed by `./run`. Pick this for core development, kernel-level debugging, or TUI-driven operation.
 
-#### Running a Node (Normal Mode)
+Both tracks start from the same repo (`git clone https://github.com/kynesyslabs/node.git`) and the same `.env` file (`cp .env.example .env`). They differ only in *where* the node binary and its dependencies live. For the full install walkthrough see [INSTALL.md](https://github.com/kynesyslabs/node/blob/main/INSTALL.md); for variable-by-variable settings see [Node configuration](/backend/developers-testbed/node-configuration).
 
-To start a Demos node, simply run:
+## Track 1: Docker Compose (recommended)
 
-`./run`
+### Prerequisites
 
-This will also spin up a Postgres container alongside the node.
-If you stop the node (e.g., with `CTRL+C` or due to a crash), the Postgres container will shut down too.
-Restarting the node with `./run` will reuse the existing database and continue from where it left off.
+- Docker 20.10+
+- The `docker compose` v2 plugin (with a space — the legacy hyphenated `docker-compose` Python script is not supported)
+- `git`
 
----
+```bash
+docker --version
+docker compose version
+```
 
-#### Cleaning Up at Start
+### Start the node
 
-To force a full reset of the database, use:
+From the repo root:
 
-`./run -c true`
+```bash
+cp .env.example .env       # defaults are fine for local dev
+docker compose up
+```
 
-This will wipe the Postgres container and restart the database from scratch.
+The first run pulls images and builds the node container, which can take a few minutes. Subsequent starts are near-instant.
 
-> **Note**: This resets the entire blockchain.
->
-> * If you're connected to other peers, your node will resync from them.
-> * If you're running solo, the blockchain will restart from the genesis block.
+When the stack is healthy:
 
-### Other options for the run file
+- Node RPC: <http://localhost:53550> (try `curl http://localhost:53550/info`)
+- Grafana: <http://localhost:3000> (default `admin` / `demos`)
+- Prometheus: <http://localhost:9091>
 
-| Flag | Argument           | Description                                                     |
-| ---- | ------------------ | --------------------------------------------------------------- |
-| `-p` | `<port>`           | Set the RPC port (default: `53550`).                            |
-| `-d` | `<pg_port>`        | Set the Postgres port (default: `5332`).                        |
-| `-c` | `true/false`       | Clean the Postgres database before starting (default: `false`). |
-| `-i` | `<identity_file>`  | Set the identity file to use.                                   |
-| `-l` | `<peer_list_file>` | Set the peer list file (default: `demos_peerlist.json`).        |
-| `-n` | (no argument)      | Skip `git pull` (disable auto-update).                          |
-| `-u` | `<exposed_url>`    | Set the URL to expose externally.                               |
-| `-r` | `bun/node`         | Force runtime selection (`bun` is required).                    |
+### First boot: identity generation
+
+On the very first start the node entrypoint:
+
+1. Generates a fresh ed25519 keypair if `.demos_identity` does not exist in the `demos_node_state` volume.
+2. Writes the private key into the volume at `.demos_identity`.
+3. Writes the public key to a `publickey_<timestamp>` file alongside it and prints it in the container logs.
+
+Tail the logs to grab your public key:
+
+```bash
+docker compose logs -f node
+```
+
+Your identity now persists across `docker compose down` / `up` cycles. It is destroyed by `docker compose down -v` — back it up first (see [Backing up and restoring a node](/backend/miscellaneous/backing-up-and-restoring-a-node)).
+
+### Common operations
+
+```bash
+# Follow node logs
+docker compose logs -f node
+
+# Follow everything
+docker compose logs -f
+
+# Update to the latest source
+git pull
+docker compose up -d --build
+
+# Stop containers, KEEP volumes (identity, chain data, dashboards)
+docker compose down
+
+# Stop AND DELETE all volumes — nuclear, destroys identity + state
+docker compose down -v
+```
+
+State persists in named Docker volumes prefixed `demos_`:
+
+| Volume | Holds |
+|--------|-------|
+| `demos_node_state` | `.demos_identity`, `demos_peerlist.json`, `.tlsnotary-key`, `output/` |
+| `demos_pgdata` | PostgreSQL data directory (chain state, indexes) |
+| `demos_node_data` | Bundled bootstrap data (`genesis.json`, `evmChains`, `l2ps`) plus runtime artefacts |
+| `demos_node_logs` | Node logs |
+| `demos_grafana_data` | Grafana dashboards, users, settings |
+| `demos_prometheus_data` | Prometheus TSDB |
+| `demos_neo4j_data` / `demos_neo4j_logs` | Neo4j (only when the `neo4j` profile is on) |
+
+The `demos_` prefix is set explicitly in `docker-compose.yml`, so volume names are stable regardless of the directory you ran compose from.
+
+### Compose profiles
+
+`COMPOSE_PROFILES` in `.env` controls the optional services. The defaults are tuned for local development.
+
+| Profile | Adds |
+|---------|------|
+| _(none)_ | postgres + node — bare minimum |
+| `tlsnotary` | TLSNotary sidecar (HTTPS attestation) |
+| `monitoring` | Prometheus + Grafana |
+| `full` | `node-exporter` (host CPU/RAM/disk metrics) — pair with `monitoring` |
+| `neo4j` | Neo4j (only for CGC/KYC features) |
+
+```bash
+# Default: postgres + node + tlsnotary + monitoring (uses .env)
+docker compose up
+
+# Minimal: only postgres + node (also set TLSNOTARY_ENABLED=false in .env)
+COMPOSE_PROFILES= docker compose up
+
+# Add host-level metrics
+COMPOSE_PROFILES=monitoring,tlsnotary,full docker compose up
+
+# Add Neo4j (only if you actually need CGC/KYC)
+COMPOSE_PROFILES=monitoring,tlsnotary,neo4j docker compose up
+```
+
+### Going public
+
+Before joining a real Demos network from a machine that other peers should reach:
+
+1. Set `EXPOSED_URL` in `.env` to your reachable address (public IP or DNS), not `localhost`.
+2. Open inbound TCP for `RPC_PORT` (53550), `OMNI_PORT` (53551), and `7047` (TLSNotary, if enabled) on your firewall **before** advertising the public URL.
+3. Seed `demos_peerlist.json` with bootstrap peers from the team — see [Joining the testnet using a custom genesis](/backend/miscellaneous/joining-the-testnet-using-a-custom-genesis).
+
+<Warning>
+Do **not** expose `5432` (Postgres), `9090` (node metrics), `9091` (Prometheus), or `3000` (Grafana) to the public internet. Keep them behind your firewall or VPN.
+</Warning>
+
+## Track 2: Bare metal `./run` (advanced)
+
+In Track 2 the node binary runs natively under Bun, and only Postgres lives in Docker (as a sidecar managed by `./run`).
+
+### Prerequisites
+
+- Docker (still needed for the Postgres sidecar)
+- Bun (via Mise or the direct installer)
+- Rust (required by `./scripts/install-deps.sh` to build `wstcp`)
+- A `.env` with the bare-metal overrides:
+
+  ```env
+  PG_HOST=localhost
+  PG_PORT=5332
+  TLSNOTARY_HOST=localhost
+  ```
+
+The full prerequisite walkthrough lives in [INSTALL.md — Track 2](https://github.com/kynesyslabs/node/blob/main/INSTALL.md#track-2-bare-metal-with-run).
+
+### Start the node
+
+```bash
+./run
+```
+
+That spins up the Postgres sidecar (host-mapped on `5332`), runs the node natively, and opens the TUI. Stopping the node with `Ctrl+C` (or `Q` in the TUI) shuts the sidecar down too.
+
+<Note>
+`./run` at the repo root is a thin wrapper that forwards to `scripts/run` (the actual implementation). Always invoke `./run` from the repo root — never call `scripts/run` directly. The wrapper exists so the legacy command path keeps working.
+</Note>
+
+### First boot: identity generation
+
+The very first `./run`:
+
+1. Generates a fresh ed25519 keypair if `.demos_identity` does not exist.
+2. Writes the private key to `.demos_identity` in the repo root.
+3. Writes the public key to `publickey_<timestamp>` and prints it on the console.
+
+Press `Ctrl+C` (or `Q` in the TUI) to stop, then edit `.env` / `demos_peerlist.json` before restarting. Set tight permissions on the identity file:
+
+```bash
+chmod 600 .demos_identity
+```
+
+### `./run` flags
+
+| Flag | Argument | Description |
+|------|----------|-------------|
+| `-p` | `<port>` | Node RPC port (default `53550`). |
+| `-d` | `<port>` | Postgres host-mapped port (default `5332`). |
+| `-i` | `<path>` | Identity file path (default `.demos_identity`). |
+| `-c` | `true`/`false` | Clean the Postgres database on startup (default `false`). |
+| `-n` | `true`/`false` | Skip `git pull` (useful for custom branches). |
+| `-u` | `<url>` | Override `EXPOSED_URL`. |
+| `-l` | `<path>` | Peer list file (default `demos_peerlist.json`). |
+| `-r` | `<runtime>` | Force runtime — `bun` only (`node` runtime is deprecated). |
+| `-b` | `true`/`false` | Restore from the most recent backup in `output/`. |
+| `-v` | _(no arg)_ | Verbose logging. |
+| `-h` | _(no arg)_ | Show the help message. |
+| `-t` / `--no-tui` | _(no arg)_ | Disable the TUI. |
+
+Examples:
+
+```bash
+./run                          # Start with default settings
+./run -p 53551 -d 5333         # Run on custom ports
+./run -c true                  # Clean start (fresh database)
+./run -v                       # Verbose output for troubleshooting
+./run -n true                  # Skip git update
+./run -t                       # Disable the TUI
+```
+
+### TUI controls
+
+By default `./run` launches a terminal UI with tabs for **Core**, **Network**, **Chain**, **Consensus**, and others.
+
+| Key | Action |
+|-----|--------|
+| Number keys (`1`, `2`, `3`, …) | Switch to the corresponding tab |
+| Arrow keys | Scroll within the current tab |
+| `H` | Help |
+| `Q` | Quit (graceful shutdown, also stops the Postgres sidecar) |
+
+Disable the TUI with `./run -t` or `./run --no-tui` if you prefer plain log output (useful in `tmux`, CI, or when piping to a file).
+
+### Verify the node is running
+
+In a separate terminal:
+
+```bash
+# Liveness
+curl http://localhost:53550
+curl http://localhost:53550/info
+
+# Confirm ports are bound
+sudo lsof -i :53550   # node RPC
+sudo lsof -i :5332    # Postgres sidecar
+
+# Confirm the Postgres container is up
+docker ps
+```
+
+### Stop the node
+
+Press `Ctrl+C` (or `Q` in the TUI) in the `./run` terminal. To stop the Postgres sidecar manually:
+
+```bash
+cd postgres_5332
+./stop.sh
+```
+
+### Reset chain state without losing identity
+
+```bash
+./run -c true       # wipe Postgres on startup; identity in .demos_identity is kept
+```
+
+If you are connected to peers, the node will resync from them. If you are running solo, the chain restarts from the genesis block.
+
+### Bare-metal troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| Port already in use | `sudo lsof -i :5332` to identify, then `./run -d 5333` (or pick another port). |
+| Docker permission denied | `sudo usermod -aG docker $USER && newgrp docker`. |
+| Database connection timeout | `sudo systemctl restart docker`, then `cd postgres_5332 && ./clean.sh && ./start.sh`. |
+| Missing dependencies | `rm -rf node_modules bun.lockb && bun install`. |

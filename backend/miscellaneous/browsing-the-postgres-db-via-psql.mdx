@@ -1,53 +1,113 @@
 ---
-title: "Browsing The Postgres Db Via Psql"
-description: "Enter the `demosuser` password as `demospassword` and hit enter."
+title: "Browsing The Postgres DB via psql"
+description: "Connect to the node's Postgres database from either the Docker Compose stack (Track 1) or the bare-metal sidecar (Track 2)."
 icon: "database"
 ---
+
 # Browsing the Postgres DB via psql
 
-`psql` is a cli tool to interact with a posgres db.
+The Demos node persists chain state in PostgreSQL. How you reach it depends on which install track you used:
 
-### Installation (debian)
+- **Track 1 — Docker Compose (recommended).** Postgres runs as a service inside the compose network. You shell into the container with `docker compose exec`, and credentials are baked in.
+- **Track 2 — bare metal `./run` (advanced).** Postgres runs as a sidecar container with its port mapped to `localhost:5332`. You connect from the host with a local `psql` client.
+
+Both tracks ship the same default credentials (from `.env.example`):
+
+| Variable | Default |
+|----------|---------|
+| `PG_USER` | `demosuser` |
+| `PG_PASSWORD` | `demospassword` |
+| `PG_DATABASE` | `demos` |
+
+<Warning>
+The defaults are fine for solo / local development. Change `PG_PASSWORD` in `.env` before exposing anything beyond your own machine. Postgres is never meant to be reachable from the public internet on either track.
+</Warning>
+
+## Track 1: Docker Compose (recommended)
+
+In Track 1, `PG_HOST=postgres` and `PG_PORT=5432` — those are the in-network service name and the container-internal port. You do not need a `psql` client installed on the host; the Postgres image already ships one.
+
+From the repo root, with the stack running:
+
+```bash
+docker compose exec postgres psql -U demosuser -d demos
+```
+
+That drops you straight into the `demos` database as `demosuser`. No password prompt — `docker compose exec` runs inside the container, where the credentials are already provisioned.
+
+If you prefer a one-shot query:
+
+```bash
+docker compose exec postgres psql -U demosuser -d demos -c '\dt'
+```
+
+### Connecting from a host-side client (optional)
+
+If you want to use a desktop GUI like DBeaver or `psql` on the host, expose the container port by adding a host mapping in `docker-compose.override.yml`, then point your client at `localhost:<mapped-port>` with the same credentials. This is **not** the default and you should only do it on a trusted local machine.
+
+## Track 2: Bare metal `./run` (advanced)
+
+In Track 2, only Postgres runs in Docker (as a sidecar managed by `./run`), and its port is mapped to the host as `5332`. Set these in `.env` for the bare-metal path:
+
+- `PG_HOST=localhost`
+- `PG_PORT=5332`
+
+You will need a `psql` client installed on the host. On Debian/Ubuntu:
 
 ```bash
 sudo apt install -y postgresql-common
 sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
-sudo apt-get install postgresql-client-16
+sudo apt-get install -y postgresql-client-16
 ```
 
-<iframe src="https://www.postgresql.org/download/linux/debian" width="100%" height="400"></iframe>
-
-### Connecting to the db
+Then connect:
 
 ```bash
-psql -p 5332 -h localhost demos demosuser
-
-# psql -p <db_port> -h <db_host> <db_name> <db_user>
+psql -h localhost -p 5332 -U demosuser -d demos
 ```
 
-Enter the `demosuser` password as `demospassword` and hit enter.
+Enter `demospassword` at the prompt.
+
+A helper script lives under `postgres_5332/` in the repo for managing the sidecar (start, stop, clean). Use it for lifecycle operations; use `psql` directly for queries.
+
+## First commands inside `psql`
+
+Once you are in the `demos=#` prompt, list the tables:
+
+```text
+demos=# \dt
+```
+
+You will see the chain's persistent tables. The most useful ones for day-to-day inspection:
+
+| Table | What's in it |
+|-------|--------------|
+| `blocks` | Forged blocks, indexed by height |
+| `transactions` | All transactions accepted into a block |
+| `mempool` | Pending transactions waiting to be included |
+| `validators` | Active validator set with stake/status |
+| `consensus` | Consensus round state and signatures |
+| `status_native` / `status_properties` / `status_hashes` | GCR account state, properties, and the rolling state hash |
+| `pgp_key_server` | Identity-attestation key material |
+
+Some quick exploratory queries:
+
+```sql
+-- Latest 10 blocks
+SELECT height, hash, "timestamp" FROM blocks ORDER BY height DESC LIMIT 10;
+
+-- Validator set
+SELECT * FROM validators;
+
+-- Recent transactions
+SELECT hash, type, sender FROM transactions ORDER BY block_height DESC LIMIT 20;
+
+-- Count GCR accounts
+SELECT COUNT(*) FROM status_native;
+```
+
+Exit with `\q`.
 
 <Info>
-credentials are defined at: `postgres/docker-compose.yml in the node repo.`
+Schema details (column names, indexes, JSONB shapes) live in the node source under `src/database/`. Treat them as internal to the node — they can change between releases without notice.
 </Info>
-
-You can now list available tables using `dt` to get started.
-
-```
-demos-# dt
-               List of relations
- Schema |       Name        | Type  |   Owner   
---------+-------------------+-------+-----------
- public | blocks            | table | demosuser
- public | consensus         | table | demosuser
- public | mempool           | table | demosuser
- public | pgp_key_server    | table | demosuser
- public | status_hashes     | table | demosuser
- public | status_native     | table | demosuser
- public | status_properties | table | demosuser
- public | transactions      | table | demosuser
- public | validators        | table | demosuser
-(9 rows)
-```
-
-Have fun!

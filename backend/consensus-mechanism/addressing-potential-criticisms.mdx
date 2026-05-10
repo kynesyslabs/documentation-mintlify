@@ -9,4 +9,4 @@ icon: "shield-halved"
 
 #### Potential for Node Manipulation
 
-* **Response:** Continuous evaluation of nodes based on pseudorandom seed verification ensures that compromised nodes are identified and excluded from the network. This rigorous approach maintains the integrity of the blockchain system through robust cryptographic algorithms and continuous node audits.
+* **Response:** In Phase 1, validators that fall out of sync — whether through latency, divergent state, or active manipulation — are excluded from shard composition for affected blocks via passive sync filtering. The CVSA pseudorandom seed (SHA-256 over recent block hashes) ensures the eligible validator set is shuffled fairly into shards; the sync filter ensures only currently-valid validators enter that pool. **Active slashing of stake for provable misbehaviour is a Phase 2 capability — not yet shipped.** See [Validator Lifecycle](/backend/validator-lifecycle/overview) for current validator state transitions.

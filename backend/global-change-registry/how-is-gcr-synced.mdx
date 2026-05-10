@@ -1,9 +1,47 @@
 ---
-title: "How Is Gcr Synced"
-description: "TODO"
+title: "How Is GCR Synced"
+description: "How transactions are partitioned, applied concurrently across independent groups, and merged back into a deterministic GCR state."
 icon: "arrows-rotate"
 ---
 
 # How is GCR Synced?
 
-TODO
+GCR synchronization runs every time a block of transactions is applied to state. The pipeline lives in `HandleGCR.applyTransactions` (`/src/libs/blockchain/gcr/HandleGCR.ts:783`). It has three phases: **partition**, **concurrent group apply**, and **merge + persist**.
+
+## 1. Partition into independent groups
+
+`HandleGCR.partitionIndependentTxs(txs)` (`HandleGCR.ts:632`) groups transactions so that no two groups touch the same entity. The implementation uses a **union-find** over namespaced entity keys — sender pubkey, storage program address, TLS notary token id, etc. Two transactions that share any touched entity are unioned into the same group; transactions that touch nothing land in their own singleton group.
+
+The invariant: across groups, no two transactions write to the same row. Within a group, the original transaction order is preserved (so e.g. nonce increments on a shared account stay sequential).
+
+## 2. Apply groups concurrently
+
+`applyTransactions` runs groups through `runGroup(...)` in parallel waves of **`CONCURRENCY = 8`** at a time (`HandleGCR.ts:835`). The fan-out is bounded to protect the Postgres connection pool.
+
+Inside each group, transactions apply sequentially — there is no further parallelism within a group, because intra-group transactions are by definition not independent.
+
+Each group emits:
+
+- `successful` / `failed` tx hash sets
+- An indexed list of side effects (each tagged with its original tx index for later re-ordering)
+- A per-sender `assignedTxs` map (sender pubkey → tx hashes), which feeds the validator's tx assignment ledger
+
+## 3. Merge and persist
+
+After all waves finish, results are reduced:
+
+- `successful` and `failed` sets are unioned across groups.
+- Side effects are sorted by their original tx index so downstream execution sees the same ordering as a sequential baseline.
+- `assignedTxs` maps are merged. Senders only appear in one group (the union-find guarantees it), so the merge is conflict-free.
+
+A single `gcrWriteMutex.runExclusive(...)` block then persists `saveGCREditChanges(entities, mergedSideEffects)` and, if non-empty, `bulkUpdateAssignedTxs(assignedTxsUpdates)` (`HandleGCR.ts:881`). The mutex serializes against any other writer that holds it, so concurrent block applications can't interleave their persistence steps.
+
+## Properties
+
+- **Deterministic outcome.** Same input block + same starting state ⇒ same final GCR. The intra-group sequential apply and the index-based side-effect re-sort guarantee replay equivalence regardless of how groups interleave at runtime.
+- **Bounded parallelism.** Up to 8 groups run concurrently. The mutex around persistence prevents inter-block interleaving.
+- **No cross-group conflicts by construction.** Union-find guarantees disjoint entity sets per group; the persistence step needs no per-row locking.
+
+## Pre-filter
+
+Before partitioning, `applyTransactions` filters out non-state-mutating transactions (`HandleGCR.ts:815`). Only the state-touching subset enters the partition. Skipped txs are still tracked for logging/metrics but bypass the apply pipeline.

@@ -30,3 +30,11 @@ This table contains the hashes of each user's `global_change_registry` entry. Ea
 ### gcr_hashes
 
 This table is separate from the GCR data. As a metadata table, it stores the combined hashes of the `global_change_registry_subnets_txs` and `gcr_tracker` tables to generate a GCR Status hash. This is crucial for verifying the consistency of GCR statuses during synchronization and consensus processes.
+
+### `gcr_main` — balance column type
+
+The newer `gcr_main` table stores per-account balances directly. The `balance` column is **`numeric(38, 0)`** — arbitrary precision, integer-only — widened from the original `bigint` to accommodate the [osDenomination fork](/backend/network-forks/overview): post-fork balances are 10⁹× their pre-fork values (`UPDATE gcr_main SET balance = balance * 1000000000` would otherwise overflow signed 64-bit on production seed magnitudes).
+
+At the application boundary the column is read as a TypeScript `bigint` via the `bigintNumericTransformer` (`src/model/entities/transformers.ts`). Existing call sites that worked with the previous `bigint` column continue to work unchanged. Raw `entityManager.query(...)` callers must wrap the value in `BigInt(row.balance)` — this was already the convention because the pg driver also returns `bigint` columns as strings.
+
+The `numeric(38, 0)` zero-scale constraint enforces integer-only writes at the column level, comfortably covering the 10²⁷ OS magnitude ceiling.

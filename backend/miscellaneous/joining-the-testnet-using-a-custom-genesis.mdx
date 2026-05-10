@@ -1,34 +1,176 @@
 ---
 title: "Joining The Testnet Using A Custom Genesis"
-description: "To add a node to a restored network, you'll need to replace the default genesis file with the genesis file of a peer already in the network. You can g..."
+description: "Replace the bundled genesis with a network-specific one so a fresh node can sync against an existing Demos network. Covers Track 1 (Docker Compose) and Track 2 (bare metal)."
 icon: "network-wired"
 ---
+
 # Joining the testnet using a custom genesis
 
-To add a node to a restored network, you'll need to replace the default genesis file with the genesis file of a peer already in the network. You can get the genesis of a peer at `/genesis`. eg. [https://node2.demos.sh/genesis](https://node2.demos.sh/genesis).
+A fresh Demos node ships with a default `data/genesis.json` that boots an isolated single-validator chain. To join an existing network — testnet or a privately restored chain — you need:
 
-At the root of the node source, you can run the following command to download and replace the `genesis.json` file:
+1. The **same genesis file** every other peer is using. The genesis hash is checked at startup, and a mismatch is unrecoverable: consensus can never form, and the node will exit.
+2. At least one **bootstrap peer** to discover the rest of the network from.
 
-```sh
-curl -o data/genesis.json https://node2.demos.sh/genesis
-```
+Both Track 1 (Docker Compose) and Track 2 (bare metal `./run`) consume the same `data/genesis.json` file — they only differ in *where* the file needs to live for the node process to read it.
 
-Then update `demos_peerlist.json` to locate the remote peer:
+<Warning>
+Do not invent bootstrap hostnames or genesis URLs. Get the canonical `data/genesis.json` and a bootstrap peerlist from the Demos team or from a known healthy peer. Pointing at the wrong genesis simply means the node refuses to sync.
+</Warning>
 
-```json
+## What's in `genesis.json`
+
+`data/genesis.json` defines:
+
+- The chain's bootstrap accounts (GCR balances at height 0).
+- The initial validator set.
+- The **`forks` section** — activation heights for hard forks (e.g. `osDenomination`). These are loaded into `SharedState.forkConfig` at node startup and gate consensus-relevant code paths.
+
+For the fork system in detail see [Network Forks](/backend/network-forks/overview). The short version: every node on a network must agree on the `forks` section, because a different activation height produces a different chain.
+
+A genesis snippet with a scheduled fork looks like:
+
+```jsonc
 {
-    "0xpubkey": "https://node2.demos.sh"
+  "accounts": { "...": "..." },
+  "validators": [ "..." ],
+  "forks": {
+    "osDenomination": {
+      "activationHeight": 12345,
+      "description": "DEM→OS denomination change."
+    }
+  }
 }
 ```
 
-<Info>
-You can get the remote peer's public key by going to `/info` .eg. [https://node2.demos.sh/info](https://node2.demos.sh/info).
-</Info>
+A genesis with no `forks` section, or with `activationHeight: null`, leaves every fork unscheduled — the node behaves bit-identically to a pre-fork node.
 
-Finally, run the node with the `-c true` flag to delete the database:
+## Get the genesis from a healthy peer
 
-```sh
-./run -c true #other flags here
+Every running node exposes its current genesis at `/genesis`. To pull one from a known peer:
+
+```bash
+curl -o data/genesis.json https://NODE_URL/genesis
 ```
 
-Before the local node starts to sync blocks with the remote node, the genesis block hash will be checked against the remote node's hash. If the hashes don't match, consensus can never happen so the node will terminate.
+Replace `NODE_URL` with the public URL of a peer the team has told you to bootstrap from. Verify the file is valid JSON before continuing:
+
+```bash
+jq . data/genesis.json > /dev/null && echo "OK"
+```
+
+You will also want that peer's public key (from `/info`) so you can put it in your peerlist:
+
+```bash
+curl https://NODE_URL/info
+```
+
+## Track 1: Docker Compose (recommended)
+
+Track 1 stores chain runtime data in the named volume `demos_node_data`. The bundled `data/` directory (including the default `genesis.json`) is baked into the node image at build time — to override it, you can either:
+
+- **(A)** Edit `data/genesis.json` in the repo and rebuild the image, or
+- **(B)** Mount your custom genesis over the in-container path via a compose override.
+
+### Option A: edit and rebuild
+
+```bash
+# 1. Replace the genesis file in the repo
+curl -o data/genesis.json https://NODE_URL/genesis
+
+# 2. Stop and DELETE existing volumes — a custom genesis means a new chain,
+#    so the existing demos_pgdata is incompatible and must be wiped.
+docker compose down -v
+
+# 3. Rebuild the node image with the new genesis baked in, and start fresh
+docker compose up -d --build
+```
+
+The `down -v` step is required: starting against the old `demos_pgdata` with a different genesis hash will refuse to sync. Your `.demos_identity` lives in `demos_node_state` and will also be deleted by `down -v` — back it up first if you need to keep it (see [Backing up and restoring a node](/backend/miscellaneous/backing-up-and-restoring-a-node)).
+
+### Option B: bind-mount the genesis
+
+Create `docker-compose.override.yml` next to `docker-compose.yml`:
+
+```yaml
+services:
+  node:
+    volumes:
+      - ./data/genesis.json:/app/data/genesis.json:ro
+```
+
+Then:
+
+```bash
+docker compose down -v          # destroys old chain data; back up identity first
+docker compose up -d
+```
+
+The bind mount is read-only and authoritative — the node reads it at startup just like the baked-in copy.
+
+### Seed the bootstrap peerlist
+
+A fresh node has an empty `demos_peerlist.json` and cannot discover peers on its own. Seed the volume before first start:
+
+```bash
+cat > /tmp/demos_peerlist.json <<EOF
+{
+  "0xPEERPUBLICKEY": "https://NODE_URL"
+}
+EOF
+
+docker run --rm \
+  -v demos_node_state:/state \
+  -v /tmp/demos_peerlist.json:/seed/demos_peerlist.json:ro \
+  alpine sh -c 'cp /seed/demos_peerlist.json /state/ && chown 1000:1000 /state/demos_peerlist.json'
+
+docker compose up -d
+```
+
+Replace `0xPEERPUBLICKEY` and `NODE_URL` with the values from the peer's `/info` and the URL the team gave you.
+
+## Track 2: Bare metal `./run` (advanced)
+
+Track 2 reads `data/genesis.json` directly from the repo path — no volumes involved.
+
+```bash
+# 1. From the repo root, replace the genesis
+curl -o data/genesis.json https://NODE_URL/genesis
+
+# 2. Edit demos_peerlist.json to add at least one known peer
+#    Format: { "<publicKey>": "<url>" }
+$EDITOR demos_peerlist.json
+```
+
+Example `demos_peerlist.json`:
+
+```json
+{
+  "0xd0b2be2cb6d...": "https://NODE_URL"
+}
+```
+
+Then start the node with `-c true` to wipe the local Postgres (the new genesis is incompatible with the old chain data):
+
+```bash
+./run -c true
+```
+
+## Genesis hash check
+
+On startup the node computes the hash of its loaded `data/genesis.json` and, before syncing the first block from a peer, compares it against the peer's reported genesis hash. If they differ:
+
+```
+Genesis hash mismatch: local=0x... remote=0x...
+```
+
+The node terminates. Causes are almost always:
+
+- The peer is on a different network (e.g. you pointed at mainnet with a testnet genesis).
+- You edited `data/genesis.json` after first boot without also wiping chain data (`docker compose down -v` on Track 1, `./run -c true` on Track 2).
+- The peer has rotated genesis (re-deploy after a custom-genesis restore) and you have not pulled the new one.
+
+Re-pull the genesis from the peer and start over.
+
+<Info>
+Genesis hash is height-0 only. Once both sides agree there, ongoing consensus is governed by the activated forks (see [Network Forks](/backend/network-forks/overview)) and the live validator set.
+</Info>

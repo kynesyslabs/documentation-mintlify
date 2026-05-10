@@ -1,24 +1,156 @@
 ---
 title: "Backing Up And Restoring A Node"
-description: "The backup and restore feature can be used to reset the network (remove all blocks & transactions by deleting the database) without deleting GCR accou..."
+description: "Back up and restore a Demos node identity and chain state for both the Docker Compose stack (Track 1) and the bare-metal `./run` install (Track 2)."
 icon: "floppy-disk"
 ---
+
 # Backing up and restoring a node
 
-The backup and restore feature can be used to reset the network (remove all blocks & transactions by deleting the database) without deleting GCR accounts. 
+The most important thing to back up is your node's `.demos_identity` file — it holds the ed25519 private key that defines your node on the network. Lose it and you lose that identity permanently. Chain data (Postgres) is recoverable by resyncing from peers; identity is not.
 
-You can do this by executing the `run` script and setting the `-b` flag to `true` :
+The procedure differs by install track:
 
-```sh
-./run -b true #other flags here
+- **Track 1 — Docker Compose (recommended).** Identity, peerlist, TLSNotary key, and runtime artefacts live inside the named volume `demos_node_state`. You back up the volume; chain data lives separately in `demos_pgdata`.
+- **Track 2 — bare metal `./run` (advanced).** Identity and peerlist are plain files in the repo root; Postgres state lives inside the sidecar container's volume.
+
+<Warning>
+Treat `.demos_identity` like an SSH private key. Store backups encrypted, and never commit them to a repo.
+</Warning>
+
+## Track 1: Docker Compose (recommended)
+
+### What's in each volume
+
+| Volume | Holds |
+|--------|-------|
+| `demos_node_state` | `.demos_identity`, `demos_peerlist.json`, `.tlsnotary-key`, `output/` |
+| `demos_pgdata` | PostgreSQL data directory (chain state, indexes) |
+| `demos_node_data` | Bundled bootstrap data (`genesis.json`, `evmChains`, `l2ps`) plus runtime artefacts |
+| `demos_node_logs` | Node logs |
+| `demos_grafana_data` | Grafana dashboards, users, settings |
+| `demos_prometheus_data` | Prometheus TSDB |
+
+The `demos_` prefix is set explicitly in `docker-compose.yml`, so the volume names are stable regardless of the directory you ran compose from.
+
+### Back up the node identity (and node-side state)
+
+The minimum you must back up is `demos_node_state`. From the repo root:
+
+```bash
+docker run --rm \
+  -v demos_node_state:/src \
+  -v "$PWD":/dst \
+  alpine tar czf /dst/node-state-backup.tar.gz -C /src .
 ```
 
-### How it works'
+That writes `node-state-backup.tar.gz` into the current directory. The node does not need to be stopped to read this volume, but for a consistent snapshot of `output/` and `.tlsnotary-key`, prefer to run the backup while the node is stopped (`docker compose down`).
 
-Accounts are dumped into a JSON file in the `output` directory at the node source root by running the dump script and then restarting the node as usual (but with the `-c true` flag). The node scans the output directory and if a dump file is found, it is parsed and converted into the genesis format. All the accounts in the genesis are created when the genesis block is forged.
+Store the resulting tarball off-host. It contains your private key.
 
+### Back up chain state (optional)
+
+Chain state (`demos_pgdata`) is recoverable by resyncing from peers, so backing it up is optional. If you want a fast restart without resync:
+
+```bash
+docker compose down                                # quiesce Postgres for a clean snapshot
+docker run --rm \
+  -v demos_pgdata:/src \
+  -v "$PWD":/dst \
+  alpine tar czf /dst/pgdata-backup.tar.gz -C /src .
+docker compose up -d
+```
+
+For a logical (`pg_dump`) backup instead, see the Track 2 section below — the same `pg_dump` works against the compose Postgres if you exec into the container.
+
+### Restore
+
+Restoring reverses the backup: stop the stack, recreate empty volumes, untar into them, and start.
+
+```bash
+# Stop and DELETE the existing volumes (this is destructive — you are
+# about to overwrite identity + chain state with the backup contents).
+docker compose down -v
+
+# Recreate the volume(s) and restore. Docker auto-creates the volume on
+# first mount, so no explicit `docker volume create` is needed.
+docker run --rm \
+  -v demos_node_state:/dst \
+  -v "$PWD":/src \
+  alpine tar xzf /src/node-state-backup.tar.gz -C /dst
+
+# Optional: restore chain state too
+docker run --rm \
+  -v demos_pgdata:/dst \
+  -v "$PWD":/src \
+  alpine tar xzf /src/pgdata-backup.tar.gz -C /dst
+
+# Bring the stack back up
+docker compose up -d
+```
+
+The node will reuse the restored `.demos_identity` instead of generating a new one, and (if you restored `demos_pgdata`) skip resyncing from genesis.
+
+## Track 2: Bare metal `./run` (advanced)
+
+In Track 2 the identity and peerlist are plain files in the repo root, and Postgres lives in the `./run`-managed sidecar (host port `5332`).
+
+### Back up identity and peerlist
+
+```bash
+# From the node repo root, with the node STOPPED (Ctrl+C / Q)
+tar czf node-files-backup.tar.gz \
+  .demos_identity \
+  publickey_* \
+  demos_peerlist.json \
+  .tlsnotary-key \
+  output/
+```
+
+Set tight permissions on the backup:
+
+```bash
+chmod 600 node-files-backup.tar.gz
+```
+
+### Back up the Postgres sidecar
+
+Use `pg_dump` against the host-mapped port:
+
+```bash
+pg_dump -h localhost -p 5332 -U demosuser -d demos -Fc -f demos.dump
+```
+
+(The `-Fc` flag writes Postgres's custom binary dump format, which is the fastest to restore.)
+
+### Restore
+
+```bash
+# 1. Stop the node and the sidecar
+#    Press Ctrl+C / Q in the ./run terminal, then:
+cd postgres_5332 && ./stop.sh && cd ..
+
+# 2. Restore identity and peerlist
+tar xzf node-files-backup.tar.gz
+
+# 3. Bring the sidecar back, then restore Postgres
+cd postgres_5332 && ./clean.sh && ./start.sh && cd ..
+pg_restore -h localhost -p 5332 -U demosuser -d demos --clean --if-exists demos.dump
+
+# 4. Start the node
+./run
+```
+
+### Reset chain state without losing identity
+
+If you want to wipe blocks and transactions but keep your identity (and any GCR accounts the node knows about), use the `./run` backup/restore flag together with the clean-DB flag:
+
+```bash
+./run -b true        # restore from the most recent dump in output/
+./run -c true        # clean Postgres on startup
+```
+
+The `-b true` flow dumps GCR accounts to JSON in `output/` before clearing Postgres, then re-imports them when the node restarts; `-c true` triggers the wipe. After the next genesis block is forged, the dumped accounts are re-created at their previous balances.
 
 <Info>
-To add a node to a restored network, please see: [joining-the-testnet-using-a-custom-genesis.md](/backend/miscellaneous/joining-the-testnet-using-a-custom-genesis)
+To attach the restored node to an existing network, see [Joining the testnet using a custom genesis](/backend/miscellaneous/joining-the-testnet-using-a-custom-genesis). Re-importing accounts changes your local genesis hash, so any peer you join must agree on that hash.
 </Info>
-

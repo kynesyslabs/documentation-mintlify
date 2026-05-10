@@ -8,7 +8,11 @@ icon: "shield-halved"
 * **Why:** Traditional consensus mechanisms can be vulnerable to attacks from malicious nodes.
   * **Example:** PoW blockchains like Bitcoin are susceptible to 51% attacks where a majority of mining power could manipulate the blockchain. BFT ensures that even if some nodes act maliciously, the system can continue operating correctly by mathematically verifying node integrity through pseudorandom seeds.
 
-#### Forced Exclusion of Malicious Nodes
+#### Exclusion of Out-of-Sync Nodes (Phase 1)
 
-* **Why:** Continuous evaluation of nodes based on pseudorandom seed verification actively mitigates potential threats.
-  * **Example:** In a cryptocurrency network where double-spending attacks are common, PoR-BFT’s dynamic shard composition helps in removing compromised nodes by continuously evaluating the blockchain status mathematically through pseudorandom seeds.
+* **Why:** Nodes that fail to keep up with the canonical chain — through bad latency, divergent state, or active malice — are excluded from consensus participation.
+  * **What ships today:** Phase 1 enforces this through **passive sync filtering**: validators that fail health/sync checks are skipped during shard composition for the affected blocks. The CVSA seed itself is a deterministic shard-selection function (SHA-256 over recent block hashes), not a node-evaluation oracle — it ensures a fair shuffle, while sync filtering enforces participation eligibility.
+
+<Note>
+**Slashing — active stake removal as a punitive response to provable misbehaviour — is a Phase 2 feature.** Phase 1 does not slash, burn, or otherwise penalise stake. The "exclusion" mechanism today is sync-based eligibility, not stake destruction.
+</Note>

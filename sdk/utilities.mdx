@@ -1,8 +1,72 @@
 ---
 title: "Utilities"
-description: "Helper functions and utility methods available in the Demos SDK."
+description: "Helper functions exported from @kynesyslabs/demosdk/utils — sleep, address validation, hex/object conversion, and Uint8Array Base64 encoding."
 icon: "scissors"
 ---
 
 # Utilities
 
+The `@kynesyslabs/demosdk/utils` subpath exposes small pure-function helpers used across the SDK. They are all framework-free and safe to import in browser or Node code.
+
+## Sleep
+
+```typescript
+import { sleep } from "@kynesyslabs/demosdk/utils"
+
+await sleep(1500) // wait 1.5 seconds
+```
+
+`sleep(ms)` returns a `Promise<void>` that resolves after the given number of milliseconds.
+
+## Address validation
+
+```typescript
+import { validateEd25519Address } from "@kynesyslabs/demosdk/utils"
+
+validateEd25519Address("0x1234...64hex...")  // true / false
+```
+
+`validateEd25519Address(address)` returns `true` when `address` matches `/^0x[0-9a-f]{64}$/i` — a `0x` prefix followed by exactly 64 hex characters (case-insensitive). Use it to fail fast on malformed input before constructing transactions.
+
+## Uint8Array ↔ Base64
+
+```typescript
+import {
+    serializeUint8Array,
+    deserializeUint8Array,
+} from "@kynesyslabs/demosdk/utils"
+
+const bytes = new Uint8Array([1, 2, 3, 4])
+const b64 = serializeUint8Array(bytes)
+const back = deserializeUint8Array(b64) // same bytes
+```
+
+`serializeUint8Array(u8)` returns a Base64 string. `deserializeUint8Array(base64)` returns the original `Uint8Array`. Useful when carrying binary payloads through JSON (e.g. wire formats that require string fields).
+
+## Data manipulation
+
+The `dataManipulation` namespace bundles object-to-hex and forge-buffer helpers used by the wire serializers:
+
+```typescript
+import { dataManipulation } from "@kynesyslabs/demosdk/utils"
+
+const hex = await dataManipulation.ObjectToHex({ foo: "bar" })
+const obj = await dataManipulation.HexToObject(hex)
+
+const forgeHex = dataManipulation.ForgeToHex(forgeBuffer) // "0x..."
+const forgeBuf = dataManipulation.HexToForge(forgeHex)    // Uint8Array(64)
+
+const cloned = dataManipulation.copyCreate(obj) // deep clone via JSON round-trip
+```
+
+| Helper | Purpose |
+| --- | --- |
+| `ObjectToHex(obj)` | JSON-stringify and hex-encode an object. Async (returns `Promise<string>`). |
+| `HexToObject(hex)` | Inverse of `ObjectToHex`. Async. |
+| `ForgeToHex(buf)` | Convert a node-forge buffer to `0x`-prefixed hex. |
+| `HexToForge(hex)` | Convert a 64-byte hex string to a `Uint8Array(64)` accepted by node-forge. |
+| `copyCreate(obj)` | Deep-clone via `JSON.parse(JSON.stringify(...))`. Loses functions / dates / undefined; intended for plain payloads. |
+
+<Info>
+Prefer the WebSDK-level helpers (`Demos.signMessage`, `denomination.demToOs`, etc.) for everyday use. Reach for `utils` only when you need raw byte/hex manipulation that the higher-level surface doesn't cover.
+</Info>
