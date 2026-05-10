@@ -1,37 +1,39 @@
 ---
 title: "Rubic Bridge"
-description: "Rubic Brdige Service is located in the `src/features/bridges/rubic.ts` file"
+description: "Node-side handling of the Rubic cross-chain bridge — quotes, executes, and mocks trades on behalf of SDK clients."
 icon: "shuffle"
 ---
-Rubic Brdige Service is located in the `src/features/bridges/rubic.ts` file
 
-`getTrade` method
+The Rubic bridge integration lets clients quote and execute cross-chain swaps through a Demos node. The node forwards a `BridgeTradePayload` to the underlying [`RubicBridge`](/sdk/bridges/overview) flow and returns the result over standard RPC.
 
-Interface
+## Surface
+
+The node exposes the bridge over `rpcCall({ method: "bridge", params: [...] })`. The `RubicBridge` SDK class is a thin client wrapper around three RPC methods:
+
+| RPC method | SDK method | Purpose |
+|---|---|---|
+| `get_trade` | `RubicBridge.getTrade(demos, chain, payload)` | Quote a cross-chain trade |
+| `execute_trade` | `RubicBridge.executeTrade(demos, chain, payload)` | Submit the trade for real |
+| `execute_mock_trade` | `RubicBridge.executeMockTrade(demos, chain, payload)` | Dev-only path that exercises the same RPC plumbing without broadcasting on the foreign chain |
+
+`chain` is a string from `SupportedChains` (e.g. `"POLYGON"`, `"ETH"`). See the [SDK reference](/sdk/cookbook/swap/crosschain-swap) for end-to-end usage.
+
+## Payload
 
 ```ts
 export interface BridgeTradePayload {
-    fromToken: "NATIVE" | "USDC" | "USDT";
-    toToken: "NATIVE" | "USDC" | "USDT";
-    amount: number;
-    fromChainId: number;
-    toChainId: number;
+    fromToken: "NATIVE" | "USDC" | "USDT"
+    toToken:   "NATIVE" | "USDC" | "USDT"
+    amount: number | string
+    fromChainId: number
+    toChainId: number
 }
 ```
 
-This method is responsible for calculating and retrieving the best cross-chain trade option based on the provided parameters.
-Returns the best trade option or an error if no valid trades are found.
+`amount` and the chain IDs refer to the **foreign** chain pair (e.g. USDT on Polygon → USDT on Ethereum). `"NATIVE"` is the foreign chain's native token (ETH on EVM, MATIC on Polygon, etc.) — **not** Demos `DEM`. No OS conversion is applied.
 
-`executeTrade` method
+P4 widens `amount` to `number | string` so callers can pass BigInt-safe wire values for large foreign-chain amounts; the underlying semantics are unchanged.
 
-The Interface is imported from the `rubic-sdk` package
+## Native bridge
 
-```ts
-wrappedTrade: WrappedCrossChainTrade
-```
-
-The method interacts with the SDK to manage the trade swap, allowance, approval, transaction submission, and confirmation.
-Returns transaction receipt.
-
-`manageBridges` function is located in `src/libs/network/manageBridges.ts` file
-Handles the calls comming from the `sdks` for the `get_trade`, `execute_trade` and `execute_mock_trade` cases.
+Demos also ships a native (non-Rubic) bridge for stablecoin transfers across a curated EVM + Solana set. It is exposed via `NativeBridgeMethods` on `@kynesyslabs/demosdk/bridge`. Documenting that surface end-to-end is out of scope for this page — see the SDK barrel export for the available methods (`validateChain`, the supported-chain constants, USDC contract addresses per chain, etc.).

@@ -38,7 +38,7 @@ Used to prove ownership without revealing identity (Phase 2).
 {
     type: 'identity_attestation',
     payload: {
-        /** Poseidon(provider_id, context) - prevents double-spending */
+        /** Poseidon(provider_id, secret, context) - prevents double-spending; secret enforces cross-context unlinkability */
         nullifier_hash: string,
         
         /** Merkle root against which proof is verified */

@@ -1,108 +1,74 @@
 ---
 title: "How L2PS Transactions Are Handled"
-description: "Deep dive into L2PS transaction processing: encryption, validation, batch aggregation, and consensus integration."
+description: "Lifecycle of an L2PS transaction: client-side encryption, node-side decryption + validation, batch aggregation, ZK proof, and L1 confirmation."
 icon: "arrows-rotate"
 ---
 
 # How L2PS Transactions Are Handled
 
-This page explains the complete lifecycle of an L2PS transaction from client submission to L1 confirmation.
+This page walks through the lifecycle of an L2PS transaction from client submission to L1 confirmation.
 
 ## Client-Side Encryption
 
-Before any transaction leaves the user's device, it is encrypted using **AES-256-CBC**:
+Before any transaction leaves the user's device, it is encrypted using **AES-GCM** (32-byte key, 12-byte IV, with the GCM authentication tag preserved alongside the ciphertext). The SDK API is the `L2PS` class from `@kynesyslabs/demosdk/l2ps`:
 
 ```typescript
-// Client-side encryption (in browser)
-import { L2PSEncryption } from '@kynesyslabs/demosdk/l2ps'
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import L2PS from "@kynesyslabs/demosdk/l2ps"
 
-// Create inner transaction (what you want to send)
-const innerTx = {
-  type: "native",
-  from: "0xYourAddress...",
-  to: "0xRecipient...",
-  amount: 5
-}
+// Connect to a node and a wallet
+const demos = new Demos()
+await demos.connect("https://node2.demos.sh")
+await demos.connectWallet(mnemonic)
 
-// Encrypt with shared L2PS keys
-const encryptedBlob = L2PSEncryption.encrypt(innerTx, aesKey, iv)
+// Build the inner transaction (a normal Demos transaction)
+const innerTx = await demos.transfer(
+    "0xRecipient...",
+    100_000_000_000n, // 100 DEM in OS
+)
 
-// Wrap in outer L2PS transaction
-const l2psTx = {
-  type: "l2ps",
-  to: "testnet_l2ps_001",  // L2PS UID
-  data: encryptedBlob
-}
+// Create or rejoin an L2PS instance with the shared subnet keys
+const subnet = await L2PS.create(privateKeyHex, ivHex)
+
+// Wrap the transaction in the L2PS encrypted envelope
+const encryptedTx = await subnet.encryptTx(innerTx)
+// encryptedTx.content.type === "l2psEncryptedTx"
+// encryptedTx.content.data carries an L2PSEncryptedPayload:
+//   { l2ps_uid, encrypted_data (base64 ciphertext),
+//     tag (base64 GCM auth tag), original_hash }
 ```
 
+For the full SDK reference (factory, instance registry, decrypt, config), see [L2PS SDK](/sdk/websdk/l2ps/overview).
+
 <Warning>
-The AES key and IV must match exactly between client and L2PS nodes. If they don't match, the node will fail to decrypt and reject the transaction.
+The 32-byte AES key and the 12-byte IV must match exactly between every member of the subnet. If they don't match, decryption fails and the transaction is rejected. Distribute these keys out-of-band — the SDK never transmits them.
 </Warning>
 
 ## Node Processing
 
-When an L2PS node receives the encrypted transaction:
+When an L2PS node receives an `l2psEncryptedTx`:
 
 ### Step 1: Decryption & Validation
 
-```typescript
-// Node-side processing (handleL2PS.ts)
-async function handleL2PS(encryptedTx) {
-  // 1. Load L2PS network keys
-  const network = await ParallelNetworks.getNetwork(l2psUid)
-  
-  // 2. Decrypt the transaction
-  const decryptedTx = network.decrypt(encryptedTx.data)
-  
-  // 3. Verify sender signature
-  const isValid = Cryptography.verify(decryptedTx)
-  
-  // 4. Validate against L1 state (balance, nonce)
-  const validationResult = await L2PSTransactionExecutor.execute(decryptedTx)
-  
-  return validationResult
-}
-```
+The node looks up the subnet by `l2ps_uid`, decrypts the payload (AES-GCM verifies the auth tag — tampered ciphertext is rejected), then validates the inner transaction against L1 state (signature, nonce, balance) before executing it through the standard L2PS executor.
 
 ### Step 2: GCR Edit Generation
 
-L2PS uses the **Global Change Registry (GCR)** architecture. Instead of modifying state directly, transactions generate **GCR edits**:
+L2PS uses the **Global Change Registry (GCR)** architecture. Instead of mutating state directly, a transaction emits **GCR edits**:
 
 ```typescript
-// GCR edits generated for a transfer
+// GCR edits generated for a transfer (amounts in OS post-fork)
 [
-  {
-    type: "balance_edit",
-    account: "0xSender...",
-    delta: -6  // amount + 1 DEM fee
-  },
-  {
-    type: "balance_edit", 
-    account: "0xRecipient...",
-    delta: +5
-  }
+    { type: "balance_edit", account: "0xSender...",   delta: -101_000_000_000n }, // amount + 1 DEM L2PS fee
+    { type: "balance_edit", account: "0xRecipient...", delta: +100_000_000_000n },
 ]
 ```
 
-<Note>
-The **1 DEM fee** not credited to any account.
-</Note>
+The `1 DEM` L2PS fee is burned (not credited to any account). Total L2PS tx fee = `L2PS_TX_FEE = 1 DEM` per transaction.
 
 ### Step 3: Mempool Storage
 
-Validated transactions are stored in the L2PS-specific mempool:
-
-```sql
--- L2PS Mempool Table
-CREATE TABLE l2ps_mempool (
-  hash VARCHAR PRIMARY KEY,
-  l2ps_uid VARCHAR NOT NULL,
-  encrypted_tx JSONB NOT NULL,
-  gcr_edits JSONB NOT NULL,
-  status VARCHAR DEFAULT 'executed',
-  timestamp BIGINT NOT NULL
-);
-```
+Validated transactions enter the L2PS-specific mempool, keyed by hash and L2PS UID. The mempool stores the encrypted blob, the resolved GCR edits, and the current status (`l2ps_pending` / `l2ps_batched` / `l2ps_confirmed`).
 
 ## Batch Aggregation
 
@@ -110,16 +76,16 @@ The **L2PS Batch Aggregator** runs per L1 block and bundles pending transactions
 
 <Steps>
   <Step title="Collect Transactions">
-    Gather all pending L2PS transactions from mempool (up to 10 per batch).
+    Gather pending L2PS transactions from the mempool — capped at `ZK_CIRCUIT_MAX_BATCH_SIZE = 10` per batch.
   </Step>
   <Step title="Aggregate GCR Edits">
     Combine all balance changes into a single set of GCR edits.
   </Step>
   <Step title="Generate ZK Proof">
-    Create PLONK proof verifying batch validity without revealing content.
+    Create a **PLONK** proof verifying batch validity without revealing content.
   </Step>
   <Step title="Submit L1 Batch">
-    Single L1 transaction submitted containing proof and batch hash.
+    Single L1 transaction submitted containing the proof and the batch hash.
   </Step>
 </Steps>
 
@@ -127,97 +93,70 @@ The **L2PS Batch Aggregator** runs per L1 block and bundles pending transactions
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `L2PS_MAX_BATCH_SIZE` | 10 | Maximum transactions per batch |
-| `L2PS_MIN_BATCH_SIZE` | 1 | Minimum transactions to create batch |
-| `L2PS_AGGREGATION_INTERVAL_MS` | 10000 | Aggregation check interval |
+| `ZK_CIRCUIT_MAX_BATCH_SIZE` | 10 | Maximum transactions per batch |
+| `L2PS_TX_FEE` | 1 DEM | Per-transaction fee (burned) |
 
 ## ZK Proof Generation
 
-For each batch, a **PLONK zero-knowledge proof** is generated:
+Each batch carries a **PLONK** zero-knowledge proof. The proof verifies:
 
-```typescript
-// ZK Proof for batch validity
-const proof = await zkProver.generateProof({
-  transactionCount: batch.length,
-  inputHash: sha256(inputs),
-  outputHash: sha256(gcrEdits),
-  merkleRoot: calculateMerkleRoot(batch)
-})
-```
+- All inner-transaction signatures are valid
+- All GCR edits are arithmetically correct
+- No double-spending within the batch
+- Batch integrity (no tampering)
 
-The proof verifies:
-- ✅ All transactions have valid signatures
-- ✅ All GCR edits are mathematically correct
-- ✅ No double-spending within the batch
-- ✅ Batch integrity (no tampering)
+Proofs are generated against pre-computed proving keys per batch size (e.g. `keys/batch_5/`, `keys/batch_10/`).
 
 <Info>
-ZK proofs allow validators to verify batch validity **without seeing the actual transaction content**.
+ZK proofs let validators verify batch validity **without seeing the actual transaction content**.
 </Info>
 
 ## Consensus Integration
 
 When a new L1 block is created, **L2PS Consensus** applies the batch:
 
-```typescript
-// L2PSConsensus.ts
-async function applyPendingProofs(blockNumber) {
-  // 1. Get pending proofs for this block
-  const proofs = await L2PSProofManager.getProofsForBlock(blockNumber)
-  
-  // 2. Verify each proof
-  for (const proof of proofs) {
-    const isValid = await L2PSProofManager.verifyProof(proof)
-    
-    // 3. Apply GCR edits to L1 state
-    for (const edit of proof.gcr_edits) {
-      await HandleGCR.apply(edit)
-    }
-  }
-  
-  // 4. Update transaction statuses to 'confirmed'
-  await updateTransactionStatuses(proofs, 'confirmed')
-}
-```
+- Pending proofs for the block are loaded.
+- Each proof is verified.
+- The batch's GCR edits are applied to L1 state via `HandleGCR.apply(...)`.
+- Transaction statuses are advanced to `l2ps_confirmed`.
 
 ## Transaction Status Flow
 
 <Steps>
-  <Step title="⚡ Executed" icon="bolt">
+  <Step title="⚡ Executed (l2ps_pending)" icon="bolt">
     Validated locally, GCR edits generated **(instant)**
   </Step>
-  <Step title="📦 Batched" icon="box">
-    Included in L1 batch transaction **(per block)**
+  <Step title="📦 Batched (l2ps_batched)" icon="box">
+    Included in an L1 batch transaction **(per block)**
   </Step>
-  <Step title="✓ Confirmed" icon="check">
+  <Step title="✓ Confirmed (l2ps_confirmed)" icon="check">
     L1 block finalized **(final)**
   </Step>
 </Steps>
 
-| Status | Meaning | Reversible? |
-|--------|---------|-------------|
-| **Executed** | Validated locally, GCR edits generated | Yes (if batch fails) |
-| **Batched** | Included in L1 batch transaction | Yes (if block fails) |
-| **Confirmed** | L1 block finalized | No |
+| Status            | Meaning                                | Reversible? |
+|-------------------|----------------------------------------|-------------|
+| `l2ps_pending`    | Validated locally, GCR edits generated | Yes (if batch fails) |
+| `l2ps_batched`    | Included in an L1 batch transaction    | Yes (if block fails) |
+| `l2ps_confirmed`  | L1 block finalized                     | No |
 
 ## Authenticated History Access
 
 Unlike L1 transactions (public), L2PS history requires **cryptographic proof of ownership**:
 
 ```typescript
-// Client requesting their L2PS history
 const timestamp = Date.now()
 const message = `getL2PSHistory:${address}:${timestamp}`
-const signature = await wallet.signMessage(message)
+const { data: signature } = await demos.signMessage(message)
 
-const response = await rpcCall({
-  method: "getL2PSAccountTransactions",
-  data: {
-    l2psUid: "testnet_l2ps_001",
-    address: address,
-    timestamp: timestamp,
-    signature: signature
-  }
+const response = await demos.rpcCall({
+    method: "getL2PSAccountTransactions",
+    params: [{
+        l2psUid: "testnet_l2ps_001",
+        address,
+        timestamp,
+        signature,
+    }],
 })
 ```
 
@@ -236,9 +175,9 @@ L2PS maintains strict data separation for privacy:
     - **See:** Transaction content
   </Card>
   <Card title="Validators" icon="server">
-    - **Store:** Only batch hashes
+    - **Store:** Only batch hashes and proofs
     - **Process:** Verify ZK proofs
-    - **See:** Zero TX visibility
+    - **See:** Zero transaction visibility
   </Card>
 </CardGroup>
 
@@ -248,7 +187,7 @@ L2PS maintains strict data separation for privacy:
   <Card title="Quick Start" icon="rocket" href="./quickstart">
     Set up L2PS from scratch
   </Card>
-  <Card title="L2PS SDK" icon="code" href="../../sdk/websdk/l2ps-sdk/overview">
+  <Card title="L2PS SDK" icon="code" href="/sdk/websdk/l2ps/overview">
     Use L2PS in your application
   </Card>
 </CardGroup>

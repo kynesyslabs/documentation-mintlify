@@ -28,8 +28,8 @@ mkdir -p data/l2ps/testnet_l2ps_001
 # Generate AES-256 key (32 bytes = 64 hex characters)
 openssl rand -hex 32 > data/l2ps/testnet_l2ps_001/private_key.txt
 
-# Generate IV (16 bytes = 32 hex characters)
-openssl rand -hex 16 > data/l2ps/testnet_l2ps_001/iv.txt
+# Generate IV (12 bytes = 24 hex characters — AES-GCM standard)
+openssl rand -hex 12 > data/l2ps/testnet_l2ps_001/iv.txt
 ```
 
 ### Create Config File

@@ -10,31 +10,29 @@ Demos Network employs a variety of techniques for different chains and protocols
 
 The primary mechanism for achieving this is known as Cross Context Identities (CCI).
 
-Within the blockchain, specifically in the StatusNative table of the database, each address is associated with a JSON object called "identities." This serves as a registry for the user's various identities in different contexts.
+Within the blockchain — specifically in the **GCRMain** entity of the GCRv2 schema — each address carries a JSON object called `identities`. This serves as a registry for the user's various identities across contexts.
 
-The json structure is as follows:
+The column is declared on `GCRMain`:
 
-````
 ```typescript
-
-    @Column("json", { name: "identities", nullable: true })
-    identities: StoredIdentities | null = new Map() // NOTE This is a map of the public identifiers and the context
+@Column("json", { name: "identities", nullable: true })
+identities: StoredIdentities | null = new Map()
 ```
-````
 
-The `StoredIdentities` type is defined as follows:
+`StoredIdentities` keys are context-scoped identifiers; values describe the identity payload per context. Demos currently supports **eight identity contexts**, each handled by its own GCR routine:
 
-````
-```typescript
-type Identity = { // NOTE This supports both chains and web2 contexts
-    public_identifier: string
-    context: "xm" | "web2"
-}
+| Context | Source |
+|---|---|
+| `xm` | Cross-chain wallet identity (EVM, Solana, Aptos, etc.) |
+| `web2` | Web2 social identity (Twitter, GitHub, Discord, Telegram) |
+| `pqc` | Post-quantum key bindings (Falcon, ML-DSA) |
+| `ud` | Unstoppable Domains |
+| `nomis` | Nomis wallet score |
+| `humanpassport` | Human Passport humanity proof |
+| `ethos` | Ethos reputation profile |
+| `tlsn` | TLSNotary-attested web proofs |
 
-type StoredIdentities = Map<string, Identity> // NOTE The key is the network name or the web2 context name
-
-```
-````
+Each context has its own payload shape and validation rules. The full list of GCR routines lives at `/Users/tcsenpai/kynesys/node/src/libs/blockchain/gcr/gcr_routines/`.
 
 Upon each user transaction on a different chain or context (e.g., a [cross-chain](../../sdk/cross-chain/) transaction or a Web2 transaction involving an API key), the public portion of that identity is saved inside the aforementioned table.
 

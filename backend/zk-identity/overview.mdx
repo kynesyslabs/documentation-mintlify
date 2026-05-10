@@ -21,8 +21,8 @@ It uses **Zero-Knowledge Proofs (ZK-SNARKs)** to guarantee:
     A cryptographic commitment to an identity, stored on-chain in a Merkle Tree. It hides the user's ID and secret.
   </Card>
   <Card title="Nullifier" icon="slash">
-    `Poseidon(provider_id, context)`
-    A unique hash generated for a specific action (context). Prevents double-spending while maintaining anonymity.
+    `Poseidon(provider_id, secret, context)`
+    A unique hash generated for a specific action (context). Including `secret` ensures nullifiers cannot be linked across contexts even if `provider_id` leaks. Prevents double-spending while maintaining cross-context unlinkability.
   </Card>
   <Card title="Merkle Tree" icon="sitemap">
     A valid commitment must exist in the global Merkle Tree. The ZK proof verifies inclusion in this tree.

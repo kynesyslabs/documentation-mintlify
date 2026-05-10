@@ -1,43 +1,51 @@
 ---
 title: "Rubic Bridge Test"
-description: "How to use the tests for the RubicService in the `rubic.test.ts` file."
+description: "Run the Rubic bridge integration tests in `rubic.test.ts`."
 icon: "shuffle"
 ---
-How to use the tests for the RubicService in the `rubic.test.ts` file.
 
-Steps to run tests `getTrade`, `executeTrade` with mock data, and `executeTrade` with real funds.
+This page covers the integration tests for the `RubicBridge` SDK class, located at `/src/tests/bridge/rubic.test.ts`.
 
-Before running the tests, first need to run the `node` repository.
-After that you can run the first 2 tests `getTrade` and `executeTrade` with mock data.
-For these tests don't need to change the private key for the wallet connect part
+The test file exercises three flows: `getTrade`, `executeTrade` with mock data, and `executeTrade` with real funds.
 
-To run `executeTrade` with the real funds test, first need to remove the `skip` operator from the test, you can set it to `only`.
-To run this test also need to change the private key in the `rubic.test.ts`, in the wallet should be some funds to do a real swap.
+Before running the tests, start the `node` repository so the bridge RPC is reachable.
 
-To run tests, use this command
+The first two tests (`getTrade` and the mock `executeTrade`) work without any wallet setup — the default test mnemonic is fine.
 
-```ts
-yarn test:rubic-service
+To run `executeTrade` with real funds:
+
+1. Remove the `skip` operator from the test (set it to `only` if you want to run it in isolation).
+2. Replace the test mnemonic in `rubic.test.ts` with a wallet that holds funds on the source chain.
+
+Run the suite:
+
+```bash
+bun test src/tests/bridge/rubic.test.ts
 ```
 
-`getTrade` method
+### `getTrade`
 
-This method is responsible for calculating and retrieving the best cross-chain trade option based on the provided parameters.
-Returns the best trade option or an error if no valid trades are found.
+Fetches the best cross-chain trade option for the supplied payload. Returns the best trade or an error if no valid route is found.
 
-`executeTrade` method
+### `executeTrade`
 
-The method interacts with the SDK to manage the trade swap, allowance, approval, transaction submission, and confirmation.
-Returns transaction receipt.
+Submits the trade. Manages allowance, approval, the swap call, and confirmation. Returns the transaction receipt.
 
-Example of Payload for both methods
+### Payload shape
 
 ```ts
+import {
+    BridgeTradePayload,
+    SupportedChains,
+} from "@kynesyslabs/demosdk/bridge"
+
 const payload: BridgeTradePayload = {
-                fromToken: "USDT",
-                toToken: "USDT",
-                amount: 1,
-                fromChainId: 137,
-                toChainId: 1,
-            }
+    fromToken: "USDT",
+    toToken: "USDT",
+    amount: 1,
+    fromChainId: 137,
+    toChainId: 1,
+}
 ```
+
+`fromToken` / `toToken` accept `"NATIVE" | "USDC" | "USDT"`. See the [crosschain swap recipe](/sdk/cookbook/swap/crosschain-swap) for the production-flow example.

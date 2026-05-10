@@ -12,7 +12,7 @@ L2PS is a privacy-preserving transaction layer that enables **encrypted transact
 
 <CardGroup cols={2}>
   <Card title="Client-Side Encryption" icon="lock">
-    Transactions are encrypted with **AES-256** in your browser before leaving your device.
+    Transactions are encrypted with **AES-GCM** (32-byte key, 12-byte IV, authentication tag) in your browser before leaving your device.
   </Card>
   <Card title="Batch Rollups" icon="layer-group">
     Multiple L2PS transactions are bundled into a single L1 transaction per block.
@@ -31,7 +31,7 @@ L2PS is a privacy-preserving transaction layer that enables **encrypted transact
 
 <Steps>
   <Step title="Client Encrypts">
-    Transaction is encrypted with shared **AES-256** key in the browser before transmission.
+    Transaction is encrypted with the shared **AES-GCM** key (32 bytes) and IV (12 bytes) in the browser before transmission.
   </Step>
   <Step title="L2PS Node Decrypts">
     Node receives encrypted blob, decrypts, validates signature and balance.
@@ -89,7 +89,7 @@ Each L2PS transaction costs **1 DEM**. This creates a deflationary mechanism whi
 
 To participate in an L2PS network, nodes must:
 
-1. Have the shared **AES-256 key** and **IV**
+1. Have the shared **AES-GCM key** (32 bytes / 64 hex chars) and **IV** (12 bytes / 24 hex chars)
 2. Be configured with the correct **L2PS UID**
 3. Store and sync the L2PS mempool with other participants
 
