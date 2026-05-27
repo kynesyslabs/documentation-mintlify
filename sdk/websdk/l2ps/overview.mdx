@@ -17,7 +17,7 @@ The L2PS module is exported from `@kynesyslabs/demosdk/l2ps`.
 `L2PS.create(privateKey?, iv?)` is the factory method. Each instance is a participant in one subnet, identified by the SHA-256 of its private key. Random keys are generated if you don't provide your own.
 
 ```typescript
-import L2PS from "@kynesyslabs/demosdk/l2ps"
+import { L2PS } from "@kynesyslabs/demosdk/l2ps"
 
 // Create with freshly generated random keys
 const subnet = await L2PS.create()

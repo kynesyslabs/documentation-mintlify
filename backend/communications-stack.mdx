@@ -1,8 +1,73 @@
 ---
 title: "Communications Stack"
-description: "Overview of the Demos Network peer-to-peer communication protocols and networking layer."
+description: "Overview of the Demos node's networking layers: P2P transport, JSON-RPC, the Web2 proxy, and the real-time messaging servers."
 icon: "satellite-dish"
 ---
 
 # Communications Stack
 
+A Demos node speaks several protocols at once. They sit at different layers
+of the stack, from the binary node-to-node transport up to the WebSocket
+servers that relay end-to-end encrypted chat. This page is a map of those
+layers and links to the detailed pages for each subsystem.
+
+## P2P transport (node-to-node)
+
+Validators and full nodes talk to each other over the **OmniProtocol**, a
+binary, length-framed, TLS-secured transport. The protocol is implemented
+under `src/libs/omniprotocol/`:
+
+- **Server side** (`src/libs/omniprotocol/server/`): `OmniProtocolServer`,
+  `TLSServer`, `InboundConnection`, `ServerConnectionManager`.
+- **Client/transport side** (`src/libs/omniprotocol/transport/`):
+  `PeerConnection`, `TLSConnection`, `ConnectionPool`, `ConnectionFactory`,
+  `MessageFramer`.
+- **Wire format**: messages carry an `OmniOpcode`
+  (`src/libs/omniprotocol/protocol/opcodes.ts`) such as `PING`,
+  `HELLO_PEER`, `EXECUTE`, `BROADCAST`, `MEMPOOL_SYNC`, `BLOCK_SYNC`, and the
+  consensus opcodes. Authentication, rate limiting, and serialization live in
+  the sibling `auth/`, `ratelimit/`, and `serialization/` folders.
+
+Peer lifecycle and message fan-out are managed by:
+
+- `src/libs/peer/PeerManager.ts` — the registry of known peers.
+- `src/libs/network/manageHelloPeer.ts` — the `HELLO_PEER` handshake
+  (`HelloPeerRequest`: a signed `url` + `publicKey` + `syncData`).
+- `src/libs/network/manageP2P.ts` — `DemosP2P`, a multiton that manages
+  participant-to-participant message sessions (the node acts as a relayer).
+- `src/libs/communications/broadcastManager.ts` — `BroadcastManager`,
+  which broadcasts new blocks and transactions to the relevant peers.
+
+## JSON-RPC layer
+
+Clients and the SDK reach the node through a JSON-RPC interface rather than
+the binary transport. Each RPC method maps to a routine handler under
+`src/libs/network/routines/`.
+
+<Card title="RPC Methods" icon="code" href="/backend/api-reference/rpc-methods">
+  The full list of JSON-RPC methods exposed by the node, including
+  `web2ProxyRequest` used by the Web2 proxy described below.
+</Card>
+
+## Higher-level services
+
+<CardGroup cols={2}>
+  <Card title="Web2 Proxy (DAHR)" icon="globe" href="/backend/communications-stack/web2-proxy-dahr">
+    Relay arbitrary HTTPS requests through a node via the `web2ProxyRequest`
+    RPC method, with deterministic response hashing for attestation.
+  </Card>
+  <Card title="Real-time Messaging" icon="comments" href="/backend/communications-stack/messaging">
+    The WebRTC signaling server and the L2PS-backed messaging server that
+    relay end-to-end encrypted instant messages between peers.
+  </Card>
+</CardGroup>
+
+<Note>
+  **Experimental: ActivityPub / Fediverse server.** An experimental
+  ActivityPub-style store-and-serve server exists under
+  `src/features/activitypub/` (`fediverse.ts`, `fedistore.ts`,
+  `feditypes.ts`). It is explicitly marked experimental in the source, the
+  handlers carry `TODO Authentication` markers, and it is not wired into node
+  startup. It is **not production-ready** and is listed here only for
+  completeness.
+</Note>

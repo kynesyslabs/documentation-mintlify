@@ -10,7 +10,7 @@ MCP (Model Context Protocol) is an open standard that allows AI assistants to co
 * **Production Ready**: Full error handling, logging, and security considerations
 * **Type Safe**: Complete TypeScript support with runtime validation
 
-The MCP server is automatically started when you run your Demos Network node (`src/index.ts`). The integration follows these steps:
+The MCP server is OFF by default and must be enabled by setting `MCP_ENABLED=true`. Once enabled, it is started when you run your Demos Network node (`src/index.ts`). The integration follows these steps:
 
 1. **Environment Configuration**: Loads MCP settings from environment variables
 2. **Port Management**: Automatically selects available ports using the same system as other services

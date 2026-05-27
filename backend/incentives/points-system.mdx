@@ -1,0 +1,131 @@
+---
+title: "Points System"
+description: "How Demos nodes award reputation points for linking Web2 and Web3 identities, where points are stored in the GCR, and the public award/deduct method surface."
+icon: "trophy"
+---
+
+# Points System
+
+The points system is a lightweight reputation mechanism: accounts earn points
+for linking and verifying external Web2 (Twitter, GitHub, Telegram, Discord) and
+Web3 (wallets, Unstoppable Domains, Nomis, Human Passport, Ethos) identities. It
+is implemented by the singleton `PointSystem` class
+(`src/features/incentive/PointSystem.ts`).
+
+Points feed into the [Referral System](/backend/incentives/referral-system),
+which awards extra bonuses on top of the base linking points.
+
+## Point values
+
+Base award values (`pointValues` in `PointSystem.ts`):
+
+| Action | Points |
+| --- | --- |
+| `LINK_WEB3_WALLET` | 0.5 |
+| `LINK_TWITTER` | 2 |
+| `LINK_GITHUB` | 1 |
+| `LINK_TELEGRAM` | 1 |
+| `FOLLOW_DEMOS` | 1 |
+| `LINK_DISCORD` | 1 |
+| `LINK_UD_DOMAIN_DEMOS` | 3 |
+| `LINK_UD_DOMAIN` | 1 |
+| `LINK_HUMAN_PASSPORT` | 1 |
+
+Nomis and Ethos awards are score-tiered rather than fixed:
+
+- `getNomisPointsByScore`: 1-5 points based on the normalized score
+  (`>=80 -> 5`, `>=60 -> 4`, `>=40 -> 3`, `>=20 -> 2`, else `1`).
+- `getEthosPointsByScore`: 1-5 points (`>=2000 -> 5`, `>=1600 -> 4`,
+  `>=1200 -> 3`, `>=800 -> 2`, else `1`).
+
+## Where points are stored
+
+Points live in the `points` JSONB column on the account's `GCRMain` row (the
+GCR):
+
+```typescript
+points: {
+    totalPoints: number
+    breakdown: {
+        web3Wallets: { [chain: string]: number }
+        socialAccounts: {
+            twitter: number
+            github: number
+            discord: number
+            telegram: number
+        }
+        udDomains?: { [domain: string]: number }
+        referrals: number
+        demosFollow: number
+        nomisScores: { [chain: string]: number }
+        humanPassport?: number
+        ethosScores?: { [chain: string]: number }
+        // weeklyChallenge / zkAttestation also tracked
+    }
+    lastUpdated: Date
+}
+```
+
+All award and deduct methods funnel through the private `addPointsToGCR`, which
+updates the relevant `breakdown` bucket, recomputes `totalPoints`, sets
+`lastUpdated`, and saves the account. Deductions are floored at zero per bucket.
+
+## Public method surface
+
+The methods below are the public surface of `PointSystem`. The corresponding
+linking/unlinking hooks live in `IncentiveManager`
+(`src/libs/blockchain/gcr/gcr_routines/IncentiveManager.ts`).
+
+### Read
+
+- `getUserPoints(userId)` - returns an `RPCResponse` whose `response` is the
+  user's points plus linked-identity summary and `referralCode`. Reads identity
+  data live from the GCR and backfills a referral code for legacy accounts.
+
+### Award
+
+- `awardWeb3WalletPoints(userId, walletAddress, chain, referralCode?)`
+- `awardTwitterPoints(userId, twitterUserId, referralCode?)`
+- `awardGithubPoints(userId, githubUserId, referralCode?)`
+- `awardTelegramPoints(userId, telegramUserId, referralCode?, attestation?)`
+- `awardTelegramTLSNPoints(userId, telegramUserId, referralCode?)`
+- `awardDiscordPoints(userId, referralCode?)`
+- `awardUdDomainPoints(userId, domain, signingAddress, referralCode?)`
+- `awardNomisScorePoints(userId, chain, nomisScore, referralCode?)`
+- `awardHumanPassportPoints(userId, referralCode?)`
+- `awardEthosScorePoints(userId, chain, ethosScore, referralCode?)`
+
+### Deduct
+
+- `deductWeb3WalletPoints(userId, walletAddress, chain)`
+- `deductTwitterPoints(userId)`
+- `deductGithubPoints(userId, githubUserId)`
+- `deductTelegramPoints(userId)`
+- `deductDiscordPoints(userId)`
+- `deductUdDomainPoints(userId, domain)`
+- `deductNomisScorePoints(userId, chain)`
+- `deductHumanPassportPoints(userId)`
+- `deductEthosScorePoints(userId, chain)`
+
+Award methods are idempotent per identity: if a bucket already holds points for
+that platform/domain/chain, they return `pointsAwarded: 0`. Several awards also
+enforce prerequisites (for example, wallet, Nomis, and Ethos awards require a
+linked Twitter account; Telegram awards require verified group membership).
+
+## How awards are triggered
+
+Identity-add routines invoked during consensus call the matching
+`IncentiveManager` hook (`walletLinked`, `twitterLinked`, `githubLinked`,
+`telegramLinked`, `discordLinked`, `udDomainLinked`, `nomisLinked`,
+`humanPassportLinked`, `ethosLinked`, and their `...Unlinked` counterparts),
+which forwards to the `PointSystem` award/deduct method. Any `referralCode` is
+passed through so the [Referral System](/backend/incentives/referral-system) can
+apply bonuses.
+
+## SUDO-gated campaign endpoints
+
+The RPC dispatcher (`src/libs/network/rpcDispatch.ts`) exposes two
+points-related campaign endpoints, `getCampaignData` and `awardPoints`. Both are
+in the `PROTECTED_ENDPOINTS` set and require the sender to be the node's
+`SUDO_PUBKEY`; other senders receive `401 Unauthorized sender`. See
+[Protected Endpoints](/backend/operations/protected-endpoints) for details.

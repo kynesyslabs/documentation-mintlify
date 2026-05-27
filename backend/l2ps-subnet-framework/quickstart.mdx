@@ -193,7 +193,7 @@ For 50 transactions:
     Check `data/l2ps/<uid>/config.json` exists and JSON is valid.
   </Accordion>
   <Accordion title="Missing L2PS key material">
-    Ensure `private_key.txt` and `iv.txt` exist with valid hex values (64 and 32 chars respectively).
+    Ensure `private_key.txt` and `iv.txt` exist with valid hex values (64 and 24 chars respectively).
   </Accordion>
   <Accordion title="Client keys don't match node">
     POC `.env` keys must exactly match node key files. Use the auto-copy command above.
@@ -212,7 +212,7 @@ For 50 transactions:
 # 1. Create L2PS network
 mkdir -p data/l2ps/testnet_l2ps_001
 openssl rand -hex 32 > data/l2ps/testnet_l2ps_001/private_key.txt
-openssl rand -hex 16 > data/l2ps/testnet_l2ps_001/iv.txt
+openssl rand -hex 12 > data/l2ps/testnet_l2ps_001/iv.txt
 
 # 2. Create config.json (see section 1)
 

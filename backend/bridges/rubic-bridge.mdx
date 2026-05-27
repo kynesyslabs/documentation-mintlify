@@ -8,13 +8,12 @@ The Rubic bridge integration lets clients quote and execute cross-chain swaps th
 
 ## Surface
 
-The node exposes the bridge over `rpcCall({ method: "bridge", params: [...] })`. The `RubicBridge` SDK class is a thin client wrapper around three RPC methods:
+The node exposes the bridge over `rpcCall({ method: "bridge", params: [...] })`. The node-side `manageBridges` handler (`src/libs/network/manageBridge.ts`) dispatches two RPC methods:
 
 | RPC method | SDK method | Purpose |
 |---|---|---|
 | `get_trade` | `RubicBridge.getTrade(demos, chain, payload)` | Quote a cross-chain trade |
 | `execute_trade` | `RubicBridge.executeTrade(demos, chain, payload)` | Submit the trade for real |
-| `execute_mock_trade` | `RubicBridge.executeMockTrade(demos, chain, payload)` | Dev-only path that exercises the same RPC plumbing without broadcasting on the foreign chain |
 
 `chain` is a string from `SupportedChains` (e.g. `"POLYGON"`, `"ETH"`). See the [SDK reference](/sdk/cookbook/swap/crosschain-swap) for end-to-end usage.
 

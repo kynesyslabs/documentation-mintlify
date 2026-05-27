@@ -1,0 +1,95 @@
+---
+title: "HTTP Endpoints"
+description: "Plain HTTP GET endpoints and REST route groups served by the node alongside the JSON-RPC interface."
+icon: "globe"
+---
+
+# HTTP Endpoints
+
+Besides the JSON-RPC entry point at `POST /`, the node serves a set of plain
+HTTP endpoints for info, health, discovery, and feature subsystems. All are
+registered in `src/libs/network/server_rpc.ts` (with feature routes loaded
+from their own modules).
+
+## Core GET endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/` | Greeting payload; echoes the caller's IP (`{ message, yourIP }`). |
+| GET | `/info` | Node info plus `version` and `version_name`. |
+| GET | `/health` | Liveness/readiness summary (see below). |
+| GET | `/health/subsystems` | Slim per-subsystem registry snapshot for dashboards. |
+| GET | `/version` | Node version string. |
+| GET | `/publickey` | Node public key (hex). |
+| GET | `/connectionstring` | Node connection string for peers. |
+| GET | `/peerlist` | Current known peers. |
+| GET | `/public_logs` | Public log buffer. |
+| GET | `/diagnostics` | Diagnostic log buffer. |
+| GET | `/mcp` | MCP server status (`{ enabled, transport, status }`). |
+| GET | `/genesis` | Parsed genesis data from the genesis block. |
+| GET | `/rate-limit/stats` | Rate limiter statistics. |
+
+Example:
+
+```bash
+curl http://localhost:53550/version
+# "x.y.z"
+```
+
+### /health
+
+`/health` returns a status summary with `status` (`ok` \| `degraded` \|
+`dormant` \| `failing`), boot progress, subsystem states, port drift, main-loop
+heartbeat, and error counters. The HTTP status code reflects health: `200` for
+ok/degraded/dormant (with an `X-Demos-Dormant: true` header when dormant) and
+`503` when failing, so load balancers and k8s probes can detect an unhealthy
+node without parsing the body.
+
+For the full response contract see
+[Health and Readiness](/backend/operations/health-and-readiness).
+
+## Storage program routes
+
+Registered by `registerStorageProgramRoutes`
+(`src/features/storageprogram/routes.ts`). All GET; ACL is enforced via the
+`identity` request header (anonymous callers are limited to public programs).
+Addresses use the `stor-{hash}` format.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/storage-program/:address` | Read a storage program by address. |
+| GET | `/storage-program/:address/all` | Read the program's raw data. |
+| GET | `/storage-program/:address/fields` | List top-level field names. |
+| GET | `/storage-program/:address/field/:field` | Read a field value. |
+| GET | `/storage-program/:address/field/:field/item/:index` | Read an array-field item by index. |
+| GET | `/storage-program/:address/has/:field` | Check whether a field exists. |
+| GET | `/storage-program/:address/type/:field` | Return a field's value type. |
+| GET | `/storage-program/owner/:owner` | List programs by owner (`?limit=&offset=`). |
+| GET | `/storage-program/search?q=name` | Search by program name (`?exact=&limit=&offset=`). |
+
+## ZK routes
+
+Registered by `registerZkRoutes` (`src/libs/network/zkMerkle.ts`).
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/zk/merkle-root` | Current Merkle root, block number, and leaf count. |
+| GET | `/zk/merkle/proof/:commitment` | Merkle inclusion proof for a `0x`-prefixed 64-hex commitment. |
+| GET | `/zk/nullifier/:hash` | Whether a `0x`-prefixed 64-hex nullifier hash has been used. |
+
+```bash
+curl http://localhost:53550/zk/merkle-root
+# { "rootHash": "0x...", "blockNumber": 1234, "leafCount": 42 }
+```
+
+## TLSNotary routes
+
+Registered by `registerTLSNotaryRoutes`
+(`src/features/tlsnotary/routes.ts`). Only mounted when
+`TLSNOTARY_ENABLED=true`.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/tlsnotary/health` | Service health (`healthy` \| `unhealthy` \| `disabled`). |
+| GET | `/tlsnotary/info` | Service info: enabled flag, port, public key, running state. |
+| POST | `/tlsnotary/verify` | Verify a base64-encoded `attestation` from the request body. |

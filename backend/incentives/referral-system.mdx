@@ -1,0 +1,152 @@
+---
+title: "Referral System"
+description: "How Demos nodes generate referral codes, validate them, and award bonus points to referrers and referred users during identity linking."
+icon: "user-plus"
+---
+
+# Referral System
+
+The referral system lets a user earn bonus points by inviting new users to the
+platform. It is implemented by the `Referrals` class
+(`src/features/incentive/referrals.ts`) and is invoked from the points pipeline
+during identity-linking operations. Referral state lives in the
+`referralInfo` field of each account's `GCRMain` row (the GCR).
+
+See also the [Points System](/backend/incentives/points-system) page for how
+points are awarded and stored.
+
+## What it does
+
+Every account owns a deterministic `referralCode`. When a new user links their
+first identity (wallet or social) and includes someone else's referral code,
+the node:
+
+1. Looks up the referrer account that owns the code.
+2. Validates the relationship (not self, not already referred, referee still
+   eligible).
+3. Awards a bonus to both parties and records the relationship.
+
+## Bonus constants
+
+Defined on the `Referrals` class:
+
+```typescript
+static readonly REFERRER_BONUS = 2        // points to the referrer
+static readonly REFERRED_USER_BONUS = 1   // points to the new (referred) user
+```
+
+Both bonuses are added to `points.totalPoints` and tracked under
+`points.breakdown.referrals`.
+
+## Referral code generation
+
+`Referrals.generateReferralCode(publicKey, options?)` derives a code from an
+ed25519 public key:
+
+1. Strip an optional `0x` prefix; the key must be 64 hex characters.
+2. SHA-256 hash the cleaned key (`Hashing.sha256`).
+3. Take the leading bytes of the hash and Base58-encode them (`bs58`).
+4. Truncate to the requested length. The default `length` is `12`
+   (~70 bits of entropy).
+
+Options allow other lengths (`8 | 10 | 12 | 16`), an optional 2-character
+checksum, and a prefix, but the system uses the 12-character default.
+
+```typescript
+const code = Referrals.generateReferralCode("0x" + pubkeyHex)
+// e.g. "8jKm9Xp2QvR7"
+```
+
+## GCR referral state
+
+The `referralInfo` field on `GCRMain` has this shape:
+
+```typescript
+referralInfo: {
+    totalReferrals: number
+    referredBy?: string          // pubkey of the referrer, if any
+    referralCode: string
+    referrals: Array<{
+        referredUserId: string
+        referredAt: string       // ISO timestamp
+        pointsAwarded: number
+    }>
+}
+```
+
+## Key methods
+
+### `findAccountByReferralCode(referralCode): Promise<GCRMain | null>`
+
+Locates the account that owns a code using a Postgres JSONB query:
+
+```sql
+WHERE gcr.referralInfo ->> 'referralCode' = :referralCode
+```
+
+### `isEligibleForReferral(account): boolean`
+
+Returns `true` only if the account has never been referred before. It returns
+`false` when any of the following hold:
+
+- `referralInfo.referredBy` is set
+- `referralInfo.referrals` is non-empty
+- `referralInfo.totalReferrals > 0`
+- `points.totalPoints > 0` (the account already earned points)
+
+### `isAlreadyReferred(referrerAccount, newUserPubkey): boolean`
+
+Checks whether `newUserPubkey` already appears in the referrer's
+`referralInfo.referrals[]`, preventing the same pair from being counted twice.
+
+### `processReferral(newAccount, referralCode, gcrMainRepository): Promise<void>`
+
+Entry point invoked from the points pipeline. It resolves the referrer, then
+silently returns (no error, no points) if:
+
+- the code does not resolve to any account,
+- the referrer and the new account are the same `pubkey`, or
+- the new account is already in the referrer's `referrals[]`.
+
+Otherwise it calls the private `awardReferralPoints`, which:
+
+- adds `REFERRER_BONUS` to the referrer's total and `breakdown.referrals`,
+  increments `totalReferrals`, and appends a `referrals[]` entry;
+- adds `REFERRED_USER_BONUS` to the new user and sets
+  `referralInfo.referredBy` to the referrer's pubkey;
+- saves the referrer account (the new account is saved by the caller).
+
+## How a code flows in from the SDK
+
+A `referralCode` is supplied by the SDK on identity-linking calls (for example
+`inferXmIdentity` / `addTwitterIdentity`). It is embedded in the request payload
+and the GCR edit operation.
+
+When an identity transaction is broadcast,
+`handleIdentityRequest`
+(`src/libs/network/routines/transactions/handleIdentityRequest.ts`) validates a
+present `referralCode` up front: it rejects the request if the code resolves to
+no account ("Referrer account not found") or if the referrer equals the sender
+("Referrer and new user are the same").
+
+During consensus, the identity-add routines call into `IncentiveManager` hooks
+(`walletLinked`, `twitterLinked`, etc.), which forward the `referralCode` to the
+matching `PointSystem` award method. That method calls `addPointsToGCR`, which
+invokes `Referrals.processReferral` when a code is present and the account is
+eligible:
+
+```
+editOperation.referralCode  (from SDK)
+  -> handleIdentityRequest  (broadcast-time validation)
+  -> GCR identity-add routine (consensus)
+  -> IncentiveManager.walletLinked / twitterLinked (..., referralCode)
+  -> PointSystem.awardWeb3WalletPoints / awardTwitterPoints (..., referralCode)
+  -> PointSystem.addPointsToGCR (..., referralCode)
+  -> Referrals.processReferral(account, referralCode, repository)
+```
+
+## How codes are returned
+
+A user retrieves their own referral code via `PointSystem.getUserPoints`, whose
+response includes the `referralCode` field. For legacy accounts created before
+referral support, `getUserPoints` generates and persists a code on first read.

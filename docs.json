@@ -365,8 +365,41 @@
             "group": "Architecture",
             "icon": "sitemap",
             "pages": [
-              "backend/communications-stack",
               "backend/storage-programs/overview"
+            ]
+          },
+          {
+            "group": "Communications Stack",
+            "icon": "network-wired",
+            "pages": [
+              "backend/communications-stack",
+              "backend/communications-stack/web2-proxy-dahr",
+              "backend/communications-stack/messaging"
+            ]
+          },
+          {
+            "group": "API Reference",
+            "icon": "plug",
+            "pages": [
+              "backend/api-reference/rpc-methods",
+              "backend/api-reference/http-endpoints"
+            ]
+          },
+          {
+            "group": "Operations",
+            "icon": "gauge-high",
+            "pages": [
+              "backend/operations/health-and-readiness",
+              "backend/operations/metrics-reference",
+              "backend/operations/protected-endpoints"
+            ]
+          },
+          {
+            "group": "Incentives",
+            "icon": "trophy",
+            "pages": [
+              "backend/incentives/referral-system",
+              "backend/incentives/points-system"
             ]
           },
           {

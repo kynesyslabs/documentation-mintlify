@@ -7,29 +7,44 @@ icon: "diagram-project"
 
 The following schema shows the internal database structure of the GCR.
 
-The GCR Is comprised of three tables and a metatable.
+The GCR is comprised of several native data tables and a metatable. The main ones are described below.
 
 <Frame>
   <img src="/images/GCRStructure.drawio.png" alt="GCR Structure" />
 </Frame>
 
-### global_change_registry
+### gcr_main
 
-This is the primary table where the essential properties of a Demos account within the network are stored. Note that the `details` row, which is stored in an optimized JSONB format, contains the foundational properties linked to a Demos address.
+This is the primary table where the essential properties of a Demos account within the network are stored. Each account is keyed by its `pubkey` and holds its `nonce` and `balance` (see the balance column note below). Cross-context properties — tracked web3/social identities, points, and referral info — are stored in optimized JSONB columns (`identities`, `points`, `referralInfo`), allowing for efficient data management and lower overhead.
 
-The `extended` property simplifies tracking tokens, NFTs, and cross-context properties and operations linked to an address. It is a JSONB field too, allowing for efficient data management and lower overhead.
+#### Account structure (`gcr_main` columns)
 
-### global_change_registry_subnets_txs
+A Demos account is a single `gcr_main` row with the following columns (from `src/model/entities/GCRv2/GCR_Main.ts`):
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `pubkey` | `text` (primary key) | The account's public key — its network address. |
+| `nonce` | `integer` | Monotonic transaction counter for replay protection. |
+| `balance` | `numeric(38,0)` → `bigint` | Account balance in the active denomination (DEM pre-fork, OS post-fork). See the balance column note below. |
+| `identities` | `jsonb` (`StoredIdentities`) | Cross-context identities — `xm` (web3 wallets), `web2` (social accounts), `pqc` (post-quantum keys), `ud` (Unstoppable Domains). See [Cross-Context Identities](/backend/internal-mechanisms/cross-context-identities). |
+| `points` | `jsonb` | Reputation points: `totalPoints`, a per-source `breakdown`, and `lastUpdated`. See [Points System](/backend/incentives/points-system). |
+| `referralInfo` | `jsonb` | `referralCode`, `referredBy`, `referrals[]`, `totalReferrals`. See [Referral System](/backend/incentives/referral-system). |
+| `flagged` | `boolean` | Whether the account is flagged (e.g. suspected bot / no-activity heuristics). |
+| `flaggedReason` | `text` | Reason enum: `twitter_bot`, `evm_no_tx`, `solana_no_tx`, `web3_no_tx`, `only_evm_no_tx`, `manualFlag`, `referrerFlagged`, or `""`. |
+| `reviewed` | `boolean` | Whether the flag has been manually reviewed. |
+| `createdAt` / `updatedAt` | `timestamp` | Row lifecycle timestamps. |
+
+### gcr_subnets_txs
 
 This table is responsible for holding and indexing all the transactions that happens in a [Subnet](../l2ps-subnet-framework/). Note that `tx_data` contains the encrypted data for that specific Subnet's tx and can only be decrypted by partecipants of the Subnet itself. See [how-are-l2ps-transactions-handled.md](../l2ps-subnet-framework/how-are-l2ps-transactions-handled) for more informations.
 
-### gcr_tracker
+### gcr_assigned_txs
 
-This table contains the hashes of each user's `global_change_registry` entry. Each time a GCR entry is modified, for example after a transaction, its `gcr_tracker` is updated too with the current hash of that table. This allows for fast, efficient and optimized tracking of the changes in the GCR.
+This table records which transactions have been assigned to which GCR account (`pubkey` → `tx_hash`, with the `block_number` they were applied in). It replaces the `assignedTxs` JSONB array that previously lived on `gcr_main`, eliminating the write-amplification of appending to a growing JSONB column on every block.
 
 ### gcr_hashes
 
-This table is separate from the GCR data. As a metadata table, it stores the combined hashes of the `global_change_registry_subnets_txs` and `gcr_tracker` tables to generate a GCR Status hash. This is crucial for verifying the consistency of GCR statuses during synchronization and consensus processes.
+This table is separate from the GCR data. As a metadata table, it stores the combined hashes of the GCR's native tables to generate a GCR Status hash. This is crucial for verifying the consistency of GCR statuses during synchronization and consensus processes.
 
 ### `gcr_main` — balance column type
 
@@ -38,3 +53,13 @@ The newer `gcr_main` table stores per-account balances directly. The `balance` c
 At the application boundary the column is read as a TypeScript `bigint` via the `bigintNumericTransformer` (`src/model/entities/transformers.ts`). Existing call sites that worked with the previous `bigint` column continue to work unchanged. Raw `entityManager.query(...)` callers must wrap the value in `BigInt(row.balance)` — this was already the convention because the pg driver also returns `bigint` columns as strings.
 
 The `numeric(38, 0)` zero-scale constraint enforces integer-only writes at the column level, comfortably covering the 10²⁷ OS magnitude ceiling.
+
+### Unimplemented GCR edit types
+
+GCR mutations are applied by edit type in `src/libs/blockchain/gcr/handleGCR.ts`. A few edit types are recognized by the dispatcher but are **not yet implemented** — they are no-ops on the apply path and should not be relied on:
+
+- `escrow` — logs `not yet implemented` and applies nothing. The SDK exposes an `escrow` module, but escrow transactions are **not settled by the node** on current networks.
+- `smartContract` — Demos-native contract edits are not yet wired (`not yet implemented`).
+- `assign` and `subnetsTx` — return `"Not implemented"`.
+
+Integrators should treat these as forward-looking and not assume on-chain effect until the apply path lands.

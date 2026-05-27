@@ -77,15 +77,15 @@ const { tlsn, tokenId } = await service.createTLSNotary({
     targetUrl: "https://api.example.com/private-data"
 })
 
-// Step 2: Perform attestation
-const result = await tlsn.attest({
-    url: "https://api.example.com/private-data",
-    // Control what's included in the proof with commit ranges
-    commit: {
+// Step 2: Perform attestation.
+// Commit ranges (what's included in the proof) are passed as the second argument.
+const result = await tlsn.attest(
+    { url: "https://api.example.com/private-data" },
+    {
         sent: [{ start: 0, end: 100 }],
         recv: [{ start: 0, end: 500 }]
     }
-})
+)
 
 // Step 3: Store proof on-chain (optional)
 const storeResult = await service.storeProof(

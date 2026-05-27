@@ -82,32 +82,32 @@ You will see the chain's persistent tables. The most useful ones for day-to-day 
 
 | Table | What's in it |
 |-------|--------------|
-| `blocks` | Forged blocks, indexed by height |
+| `blocks` | Forged blocks, indexed by `number` |
 | `transactions` | All transactions accepted into a block |
-| `mempool` | Pending transactions waiting to be included |
+| `mempooltx` | Pending transactions waiting to be included |
 | `validators` | Active validator set with stake/status |
 | `consensus` | Consensus round state and signatures |
-| `status_native` / `status_properties` / `status_hashes` | GCR account state, properties, and the rolling state hash |
+| `gcr_main` / `gcr_storageprogram` / `gcr_hashes` | GCR account state, storage-program state, and the rolling state hashes |
 | `pgp_key_server` | Identity-attestation key material |
 
 Some quick exploratory queries:
 
 ```sql
 -- Latest 10 blocks
-SELECT height, hash, "timestamp" FROM blocks ORDER BY height DESC LIMIT 10;
+SELECT number, hash, status FROM blocks ORDER BY number DESC LIMIT 10;
 
 -- Validator set
 SELECT * FROM validators;
 
 -- Recent transactions
-SELECT hash, type, sender FROM transactions ORDER BY block_height DESC LIMIT 20;
+SELECT hash, type, "from" FROM transactions ORDER BY "blockNumber" DESC LIMIT 20;
 
 -- Count GCR accounts
-SELECT COUNT(*) FROM status_native;
+SELECT COUNT(*) FROM gcr_main;
 ```
 
 Exit with `\q`.
 
 <Info>
-Schema details (column names, indexes, JSONB shapes) live in the node source under `src/database/`. Treat them as internal to the node — they can change between releases without notice.
+Schema details (column names, indexes, JSONB shapes) live in the node source under `src/model/entities/`. Treat them as internal to the node — they can change between releases without notice.
 </Info>

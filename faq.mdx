@@ -34,23 +34,31 @@ While `npm` and `yarn` are also supported, we strongly recommend using bun for t
 
 #### How do I download the node software?
 
-In this release, the node software is not yet publicly available. This is by design, as we are carefully assessing the network capabilities, adding more nodes in a controlled environment.
+The node software is available in the [node repository](https://github.com/kynesyslabs/node). The recommended way to run a node is via Docker Compose:
+
+```bash
+git clone https://github.com/kynesyslabs/node.git && cd node
+cp .env.example .env
+docker compose up
+```
+
+See the [Project Setup](/cookbook/project-setup/overview) guides and the repository's `INSTALL.md` for the full walkthrough (Docker Compose and bare-metal tracks).
 
 #### How can I become a validator?
 
-Once the node software is released, you can become a validator by simply following the instructions. Staking will be required in a later phase, initially no staking is required to enable faster onboarding and testing.
+You can become a validator by running the node software and following the install instructions. Staking will be required in a later phase, initially no staking is required to enable faster onboarding and testing.
 
 #### What are the requirements for running a Demos node?
 
 To run a Demos node the minimum requirements are:
 
-* 8GB RAM
-* 100mbps Download/Upload network bandwidth (dedicated)
-* 200gb SSD space
-* 4 cores (physical cores)
-* root access
+* 4GB RAM
+* 4 CPU cores (2GHz or higher)
+* Modern SSD storage
+* 200 Mbps internet connection
+* Ubuntu 22.04 LTS or a compatible Linux distribution
 
-The suggested requirements are the same, with 200mbps Download/Upload bandwidth.
+The recommended specifications are 8GB RAM or higher, 6 CPU cores, high-performance SSD storage, and a 1 Gbps internet connection.
 
 #### How can I make a transaction?
 
@@ -63,4 +71,3 @@ You can request Demos tokens at the [Demos Faucet](https://faucet.demos.sh/).
 ## What You Cannot Do (Yet)
 
 * XM and Web2 transactions are brittle as they are being constantly upgraded and improved
-* The node software is not yet public, thus new validators and node maintainers aren't allowed yet (this to carefully test and ensure the network is ready for a bigger number of nodes)

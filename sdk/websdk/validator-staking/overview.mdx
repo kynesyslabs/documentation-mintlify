@@ -66,8 +66,8 @@ await demos.confirm(tx)
 ```typescript
 // Single validator's current state
 const info = await demos.getValidatorInfo(address)
-// { address, status, staked_amount, connection_url,
-//   first_seen, valid_at, unstake_requested_at, unstake_available_at }
+// { address, status, stakedAmount, connectionUrl,
+//   firstSeen, validAt, unstakeRequestedAt, unstakeAvailableAt }
 
 // Active validator set at a specific block (defaults to chain head)
 const validators = await demos.getValidators(blockNumber)

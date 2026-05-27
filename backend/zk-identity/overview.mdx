@@ -62,7 +62,7 @@ When a user wants to perform an action (e.g., vote, claim airdrop) anonymously:
     User uses their secret and the current Merkle path to generate a ZK proof locally.
   </Step>
   <Step title="Calculate Nullifier">
-    User calculates a nullifier based on the action context: `Hash(provider_id, context)`.
+    User calculates a nullifier based on the action context: `Hash(provider_id, secret, context)`.
   </Step>
   <Step title="Submit Attestation">
     User submits `identity_attestation` transaction with the proof and nullifier.

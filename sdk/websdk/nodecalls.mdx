@@ -84,7 +84,7 @@ const txs = await demos.getTransactions("latest", 100)
 const history = await demos.getTransactionHistory(
     address,
     "all",                // type filter: "all" | "sent" | "received" | ...
-    { limit: 50, offset: 0 },
+    { limit: 50, start: 0 },
 )
 ```
 
@@ -160,7 +160,7 @@ const snapshot = await demos.getValidators(12345)
 ```typescript
 const v = await demos.getValidatorInfo(address)
 // v: ValidatorInfo | null
-// includes status, stake, unstake_requested_at, unstake_available_at
+// includes status, stakedAmount, unstakeRequestedAt, unstakeAvailableAt
 ```
 
 ### Get a validator's staked amount
@@ -264,11 +264,15 @@ const dahr = await demos.web2.createDahr() // creates a DAHR client
 
 ## IPFS quote
 
-`demos.ipfs.quote(fileSizeBytes, operation, durationBlocks)` returns the cost estimate (in OS post-fork) for an IPFS operation (`"ADD"` | `"PIN"` | `"UNPIN"`). The estimate is fork-aware.
+`demos.ipfs.quote(fileSizeBytes, operation, durationBlocks)` returns the cost estimate (in OS post-fork) for an IPFS operation (`"IPFS_ADD"` | `"IPFS_PIN"` | `"IPFS_UNPIN"`). The estimate is fork-aware.
 
 ```typescript
-const costOs = await demos.ipfs.quote(1024 * 1024, "ADD", 100_000)
+const costOs = await demos.ipfs.quote(1024 * 1024, "IPFS_ADD", 100_000)
 ```
+
+<Warning>
+**Not yet available.** IPFS storage is not implemented on the node side — there is no `ipfsQuote` handler, and the storage-program engine currently only supports `onchain` storage. The `ipfs` SDK module and `demos.ipfs.quote` are forward-looking and will not function against current networks.
+</Warning>
 
 ## TLSNotary
 

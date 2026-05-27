@@ -34,10 +34,10 @@ v3.0.0 was first published as `3.0.0-rc.1` on May 7, 2026 and promoted to `3.0.0
 Exports: `demToOs`, `osToDem`, `parseOsString`, `toOsString`, `formatDem`, `MIN_AMOUNT_OS`, `ZERO_OS`, plus constants `OS_DECIMALS = 9` and `OS_PER_DEM = 10n ** 9n`.
 
 ```ts
-import { demToOs, osToDem, OS_PER_DEM } from "@kynesyslabs/demosdk/denomination"
+import { denomination } from "@kynesyslabs/demosdk"
 
-const amountOs = demToOs("1.5")        // 1_500_000_000n
-const amountDem = osToDem(amountOs)    // "1.5"
+const amountOs = denomination.demToOs("1.5")        // 1_500_000_000n
+const amountDem = denomination.osToDem(amountOs)    // "1.5"
 ```
 
 ### Public API widened to `bigint`

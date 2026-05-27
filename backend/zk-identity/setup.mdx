@@ -22,7 +22,7 @@ This guide explains how to set up the ZK circuits and keys required for the ZK I
 Run the automated setup script to download the Powers of Tau ceremony file, compile circuits, and generate keys:
 
 ```bash
-bun run zk:setup-all
+bun run zk:setup
 ```
 
 This process will:
@@ -62,7 +62,7 @@ If you need to run steps manually:
 ```bash
 cd src/features/zk/keys/
 curl -L -o powersOfTau28_hez_final_14.ptau \
-  https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_14.ptau
+  https://storage.googleapis.com/zkevm/ptau/powersOfTau28_hez_final_14.ptau
 ```
 
 ### 2. Compile Circuits

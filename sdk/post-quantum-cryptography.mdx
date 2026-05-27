@@ -23,7 +23,7 @@ await demos.connectWallet(mnemonic, {
 })
 
 const rawTx = {...}
-const tx = demos.sign(tx)
+const tx = await demos.sign(rawTx)
 ```
 
 ### PQC Identities

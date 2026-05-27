@@ -1,0 +1,120 @@
+---
+title: "Real-time Messaging"
+description: "The WebRTC signaling server and the L2PS-backed messaging server that relay end-to-end encrypted instant messages between peers."
+icon: "comments"
+---
+
+# Real-time Messaging
+
+A Demos node ships with two WebSocket-based messaging subsystems. Both relay
+end-to-end encrypted payloads between peers — the node never sees plaintext —
+and both persist message metadata on-chain for an audit trail. Clients on the
+SDK side use the Instant Messaging support to drive these servers.
+
+## WebRTC signaling server
+
+Source: `src/features/InstantMessagingProtocol/signalingServer/signalingServer.ts`
+(peer type in `ImPeers.ts`, message types in `types/IMMessage.ts`, errors in
+`types/Errors.ts`).
+
+This is a Bun WebSocket server (`Bun.serve`) that acts as a central hub for
+peer discovery, public-key exchange, and message routing between peers. It is
+instantiated at node startup in `src/index.ts`.
+
+### Port
+
+The default port is **3005** (`signalingServerPort` in
+`src/config/defaults.ts`; the constructor also defaults to `3005`). At startup
+the node uses `rpcSignalingPort` (env `RPC_SIGNALING_PORT`) if set, otherwise
+`signalingServerPort`, then picks the next available port from there.
+
+### Message types
+
+Each frame is JSON with a `type` and a `payload`. Verified types:
+
+| Type | Direction | Purpose |
+| --- | --- | --- |
+| `register` | client → server | Register a peer with `clientId`, `publicKey`, and a `verification` proof. Server replies with `{ success: true, clientId }`. |
+| `discover` | client → server | Request the list of connected peer IDs; server replies with `{ peers }`. |
+| `message` | both | Send `{ targetId, message }` to a peer; the server forwards `{ message, fromId }` to the target. |
+| `request_public_key` | client → server | Request a peer's public key by `targetId`. |
+| `public_key_response` | server → client | Reply containing `{ peerId, publicKey }`. |
+| `peer_disconnected` | server → clients | Broadcast `{ peerId }` when a peer drops. |
+| `error` | server → client | `{ errorType, details, timestamp }`. |
+
+Registration includes a `verification` field (a `SerializedSignedObject`) that
+the server verifies via the transaction validator pool before accepting the
+peer. Messages are stored on the blockchain (as `instantMessaging`
+transactions); if the target is offline the message is persisted to the
+`OfflineMessage` store and delivered on reconnect (capped at 100 offline
+messages per sender).
+
+### Error types (`ImErrorType`)
+
+`INVALID_MESSAGE`, `CLIENT_ID_TAKEN`, `PEER_NOT_FOUND`, `INVALID_PUBLIC_KEY`,
+`REGISTRATION_REQUIRED`, `INTERNAL_ERROR`, `INVALID_PROOF`.
+
+## L2PS Messaging Server
+
+Source: `src/features/l2ps-messaging/L2PSMessagingServer.ts`.
+
+A Bun WebSocket server for messaging scoped to an **L2PS** (Layer-2 Parallel
+Subnet) network. Peers register against a specific `l2psUid`; discovery,
+public-key lookup, and routing are all confined to peers within the same L2PS
+network. Messages are delivered instantly over WebSocket and persisted through
+the L2PS rollup via an `L2PSMessagingService`.
+
+<Warning>
+  This server is **incomplete / not production-ready**. As of the reviewed
+  source, `L2PSMessagingServer.ts` imports `./L2PSMessagingService` and a local
+  `./types` module that are not present in the directory, and the class is not
+  instantiated anywhere in node startup. Treat the details below as the
+  intended protocol, not a shipped feature.
+</Warning>
+
+### Protocol frames
+
+Each frame is JSON with `type`, `payload`, and `timestamp`. Inbound frame
+types handled by the router:
+
+| Type | Purpose |
+| --- | --- |
+| `register` | Register with `{ publicKey, l2psUid, proof }`. Replies `registered` with the list of `onlinePeers` in the same network. |
+| `send` | Send `{ to, encrypted, messageHash }`. Replies `message_sent` (online) or `message_queued` (offline). |
+| `history` | Fetch conversation history with a peer: `{ peerKey, before, limit, proof }`. Replies `history_response`. |
+| `discover` | List peers in the caller's L2PS network. Replies `discover_response`. |
+| `request_public_key` | Look up a peer's public key (same network only). Replies `public_key_response`. |
+
+Server-initiated frames include `registered`, `peer_joined`, `peer_left`,
+`message`, `message_sent`, `message_queued`, `history_response`,
+`discover_response`, `public_key_response`, and `error`.
+
+### Registration and proofs
+
+- The `publicKey` must be a hex string of at least **64 chars**
+  (`MIN_PUBLIC_KEY_LENGTH`, ed25519 = 64 hex chars) matching `^[0-9a-fA-F]+$`.
+- The `proof` is a signature over the string `register:{publicKey}:{timestamp}`,
+  verified against the public key via the transaction validator pool.
+- `history` requests carry their own proof over `history:{peerKey}:{timestamp}`.
+- The target `l2psUid` must resolve to an existing L2PS network.
+
+### Limits
+
+- `MAX_MESSAGE_SIZE` = **256 KB** — max raw WebSocket frame size.
+- `MAX_CIPHERTEXT_SIZE` = **128 KB** — max encrypted ciphertext size.
+
+The `encrypted` payload must contain both `ciphertext` and `nonce`, and a peer
+cannot send a message to itself.
+
+### Error codes
+
+The server emits `error` frames with codes including `INVALID_MESSAGE`,
+`INTERNAL_ERROR`, `REGISTRATION_REQUIRED`, `INVALID_PROOF`, `L2PS_NOT_FOUND`,
+and `L2PS_SUBMIT_FAILED`.
+
+## SDK side
+
+Client applications interact with these servers through the SDK's Instant
+Messaging support, which handles registration, key exchange, encryption, and
+the WebSocket framing described above. See the SDK documentation's Instant
+Messaging section for the client API.

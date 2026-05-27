@@ -31,11 +31,11 @@ A Storage Program is a deterministic storage container that allows you to:
 
 ## Key Features
 
-- **Flexible access control**: Four modes cover private, collaborative, and public scenarios. See the [Access Control guide](./access-control) for details.
+- **Flexible access control**: Three modes (`owner`, `public`, `restricted`) cover private, collaborative, and public scenarios, plus allowlists, blacklists, and groups. See the [Access Control guide](./access-control) for details.
 - **Deterministic addressing**: `stor-` identifiers are derived from deployer inputs, so clients can pre-compute addresses before deployment.
 - **Consensus-backed writes**: Mutations are validated via consensus while reads are served instantly over RPC.
 - **Developer-friendly API**: High-level SDK helpers plus raw RPC endpoints give you control at the right abstraction.
-- **Predictable limits**: 128KB payload per program, 64 levels of nesting, 256 character keys.
+- **Predictable limits**: 1MB payload per program, 64 levels of nesting.
 
 ## How Storage Programs Work
 
@@ -106,12 +106,13 @@ Looking for implementation-ready patterns? Jump to the [Storage Program Cookbook
 Storage Program addresses are **deterministic** and **predictable**:
 
 ```typescript
-import { deriveStorageAddress } from '@kynesyslabs/demosdk/storage'
+import { StorageProgram } from '@kynesyslabs/demosdk/storage'
 
 // Generate address client-side
-const address = deriveStorageAddress(
+const address = StorageProgram.deriveStorageAddress(
   deployerAddress,  // Your wallet address
   programName,      // Unique name: "myApp"
+  nonce,           // Sender's account nonce (required)
   salt             // Optional salt for uniqueness: "v1"
 )
 
@@ -123,25 +124,28 @@ const address = deriveStorageAddress(
 ### Operations Lifecycle
 
 1. **CREATE**: Initialize new storage program with optional data
-2. **WRITE**: Add or update key-value pairs (merges with existing data)
+2. **WRITE**: Replace the entire `data` field (does not merge; use granular ops for partial updates)
 3. **READ**: Query data via RPC (no transaction needed)
 4. **UPDATE_ACCESS_CONTROL**: Change access mode or allowed addresses (deployer only)
 5. **DELETE**: Remove entire storage program (deployer only)
 
 ### Access Control Modes
 
-Each program chooses one of four modes (private, deployer-only, restricted, public). Rather than duplicating the full matrix here, see the [Access Control guide](./access-control) for the authoritative table, example flows, and security checklists.
+Each program chooses one of three modes (`owner`, `public`, `restricted`), optionally combined with allowlists, blacklists, and groups. Rather than duplicating the full matrix here, see the [Access Control guide](./access-control) for the authoritative table, example flows, and security checklists.
 
 ### Storage Limits
 
 These limits ensure blockchain efficiency:
 
 ```typescript
-const STORAGE_LIMITS = {
-  MAX_SIZE_BYTES: 128 * 1024,    // 128KB total
-  MAX_NESTING_DEPTH: 64,         // 64 levels of nested objects
-  MAX_KEY_LENGTH: 256            // 256 characters per key name
-}
+import { STORAGE_PROGRAM_CONSTANTS } from '@kynesyslabs/demosdk/storage'
+
+// STORAGE_PROGRAM_CONSTANTS = {
+//   MAX_SIZE_BYTES: 1048576,        // 1MB total
+//   MAX_JSON_NESTING_DEPTH: 64,     // 64 levels of nested objects
+//   PRICING_CHUNK_BYTES: 10240,     // 10KB fee chunk
+//   FEE_PER_CHUNK: OS_PER_DEM,      // 1 DEM per chunk
+// }
 ```
 
 **Size Calculation**:
@@ -174,7 +178,7 @@ const size = new TextEncoder().encode(JSON.stringify(data)).length
 
 ❌ **DON'T**:
 - Store private keys or secrets unencrypted
-- Exceed 128KB limit (transaction will fail)
+- Exceed 1MB limit (transaction will fail)
 - Use deeply nested objects (>64 levels)
 - Store data that changes very frequently (high transaction costs)
 
