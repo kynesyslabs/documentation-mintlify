@@ -8,7 +8,7 @@ icon: "code-branch"
 
 Demos uses a small, explicit hard-fork system to schedule consensus-rule changes at specific block heights. The same mechanism gates wire-format changes, state migrations, and any other rule that cannot vary across replicas without breaking consensus.
 
-The first production fork is **`osDenomination`**, which activates the [sub-DEM (OS) denomination](#fork-registry).
+The first production fork is **`osDenomination`**, which activates the [sub-DEM (OS) denomination](#fork-registry). A second fork, **`gasFeeSeparation`** (DEM-665), splits the single lump-sum gas fee into `network`/`rpc`/`additional` components with per-component burn/treasury/rpc-operator distribution.
 
 ## Design goals
 
@@ -24,18 +24,37 @@ The fork machinery is intentionally minimal:
 Known forks live in `src/forks/forkConfig.ts` as a typed registry:
 
 ```typescript
-export type ForkName = "osDenomination"
+export type ForkName = "osDenomination" | "gasFeeSeparation"
 
-export interface ForkConfig {
+export interface BaseForkConfig {
     activationHeight: number | null
     description?: string
 }
 
-export const DEFAULT_FORK_CONFIG: Record<ForkName, ForkConfig> = {
+// Per-fork variants extend BaseForkConfig with their own payload.
+export type OsDenominationConfig = BaseForkConfig
+export interface GasFeeSeparationConfig extends BaseForkConfig {
+    treasuryAddress: string
+}
+export type ForkConfig = OsDenominationConfig | GasFeeSeparationConfig
+
+export const DEFAULT_FORK_CONFIG: ForkConfigByName = {
+    // Fresh chains boot post-fork by default (activationHeight: 0).
+    // Operators upgrading an existing pre-fork chain must instead pin a
+    // future block height in data/genesis.json.
     osDenomination: {
-        activationHeight: null,
+        activationHeight: 0,
         description:
             "DEM→OS denomination change. amount field becomes OS string.",
+    },
+    // gasFeeSeparation stays inactive by default — it also needs a real
+    // treasuryAddress (the placeholder zero address is rejected by the
+    // loader when activationHeight !== null).
+    gasFeeSeparation: {
+        activationHeight: null,
+        description:
+            "Gas fee separation (DEM-665). Splits gas into network/rpc/additional components.",
+        treasuryAddress: PLACEHOLDER_TREASURY_ADDRESS,
     },
 }
 ```
@@ -49,9 +68,9 @@ Adding a fork is a single line in this registry. Removing or renaming one is int
 
 ## Activation height & genesis loading
 
-Activation heights are loaded from `data/genesis.json` at node startup and hydrated into `SharedState.forkConfig`. A fresh genesis without a `forks` section produces a registry where every fork has `activationHeight: null`, preserving pre-fork semantics.
+Activation heights are loaded from `data/genesis.json` at node startup and hydrated into `SharedState.forkConfig`. A fresh genesis without a `forks` section inherits `DEFAULT_FORK_CONFIG`: `osDenomination` defaults to `activationHeight: 0` (fresh chains boot post-fork), while `gasFeeSeparation` defaults to `null` (configured but unscheduled). Operators upgrading an existing pre-fork chain must pin `osDenomination.activationHeight` to a future block in genesis and roll the upgrade in lock-step with their peers.
 
-The loader lives in `src/forks/loadForkConfig.ts`. The runtime registry is a deep copy of `DEFAULT_FORK_CONFIG`, so per-instance mutation (e.g. genesis loading) does not leak into the module-level constant.
+The loader lives in `src/forks/loadForkConfig.ts`. The runtime registry is a deep copy of `DEFAULT_FORK_CONFIG` (via `cloneDefaultForkConfig()`), so per-instance mutation (e.g. genesis loading) does not leak into the module-level constant.
 
 ## Gate function
 
@@ -108,9 +127,18 @@ The node exposes fork status via the `getNetworkInfo` RPC (`src/libs/network/han
       "activated": false,
       "currentHeight": 9876
     }
+  },
+  "nodeVersion": {
+    "version": "0.9.8",
+    "gitSha": "…",
+    "branch": "stabilisation",
+    "dirty": false,
+    "buildTime": "…"
   }
 }
 ```
+
+The `forks` object surfaces only `osDenomination` today; `nodeVersion` carries the responding node's build provenance (package version, git SHA, branch, dirty flag, build timestamp) so a single call answers both "is the fork active?" and "which binary is this node running?".
 
 | Field | Meaning |
 | ----- | ------- |

@@ -1,0 +1,143 @@
+---
+title: "Health and Readiness"
+description: "The /health, /health/subsystems, and /info endpoints a Demos node exposes for load balancers, Kubernetes probes, and uptime monitoring."
+icon: "heart-pulse"
+---
+
+# Health and Readiness
+
+A Demos node exposes plain HTTP `GET` endpoints on its RPC port for operational
+monitoring. These are unauthenticated, return JSON, and are designed to be
+polled by load balancers, Kubernetes liveness/readiness probes, and uptime
+checks. The contract is additive: existing fields are preserved across releases
+so probes do not break.
+
+## `GET /health`
+
+The primary health endpoint. It aggregates the subsystem registry, the boot
+tracker, the main-loop heartbeat, and process-level error counters into a single
+snapshot.
+
+### Status semantics
+
+The top-level `status` field collapses everything into one of four values, with
+the following precedence (`failing` wins, then `dormant`, `degraded`, `ok`):
+
+| `status`   | Meaning | HTTP code |
+| ---------- | ------- | --------- |
+| `ok`       | All subsystems healthy, main loop alive. | `200` |
+| `degraded` | At least one non-critical subsystem is `failed`, but the chain and main loop are alive. | `200` |
+| `dormant`  | The node booted with an empty peer list and intentionally skipped signaling/MCP/TLSNotary/main loop. | `200` |
+| `failing`  | The mempool/DB is unreachable, the `chain` subsystem failed, or the main loop died (and the node is not dormant). | `503` |
+
+<Note>
+Only `failing` returns HTTP `503`. `dormant` and `degraded` are intentional
+states and return `200`, so a probe keyed solely on HTTP status will not flap on
+a node that legitimately has no peers yet.
+</Note>
+
+### Headers
+
+- `X-Demos-Dormant: true` — added only when `status` is `dormant`. Lets an LB
+  route around a node that is up but not yet participating in consensus.
+
+### Response fields
+
+| Field | Type | Notes |
+| ----- | ---- | ----- |
+| `version` / `version_name` | string | Node version and codename. |
+| `accepting` | boolean | True when the node is synced and not currently in its sync loop. |
+| `mempool_size` | number \| null | Pending transaction count. `null` when `Mempool.count()` fails (forces `status: failing`). |
+| `uptime_s` | number | Seconds since process start. |
+| `status` | string | `ok` \| `degraded` \| `dormant` \| `failing`. |
+| `dormant` | boolean | Raw dormant-mode flag. |
+| `boot` | object | Boot-step roll-up: `complete`, `steps_total`, `steps_ready`, `steps_failed`, `steps_skipped`, `current` (name of the running step, or `null`). |
+| `subsystems` | object | Per-subsystem snapshot (see below). |
+| `ports` | object | Per-subsystem `{ requested, actual, drifted }`. `drifted` is true when the bound port differs from the requested one. Only subsystems with a known port appear. |
+| `main_loop` | object | `heartbeat_age_s` (seconds since last tick, or `null`), `iterations_total`, `exited`, `exit_reason`. |
+| `errors` | object | `uncaught_total`, `unhandled_rejection_total`, `last_uncaught`. |
+
+Each entry under `subsystems` is keyed by name (one of `chain`, `rpc`,
+`metrics`, `signaling`, `mcp`, `tlsnotary`, `omni`, `dtr`, `l2ps`, `main_loop`)
+and carries: `status` (`pending` \| `running` \| `ready` \| `failed` \|
+`skipped` \| `dormant`), `since` (ms timestamp of the last transition or
+`null`), `port`, `requestedPort`, `lastError`, `enabled`, and optional `extra`.
+
+### Sample response
+
+```json
+{
+  "version": "1.4.2",
+  "version_name": "mycelium",
+  "accepting": true,
+  "mempool_size": 12,
+  "uptime_s": 8421,
+  "status": "ok",
+  "dormant": false,
+  "boot": {
+    "complete": true,
+    "steps_total": 9,
+    "steps_ready": 8,
+    "steps_failed": 0,
+    "steps_skipped": 1,
+    "current": null
+  },
+  "subsystems": {
+    "chain": { "status": "ready", "since": 1716800000000, "port": null, "requestedPort": null, "lastError": null, "enabled": true },
+    "rpc": { "status": "ready", "since": 1716800000100, "port": 53550, "requestedPort": 53550, "lastError": null, "enabled": true },
+    "metrics": { "status": "ready", "since": 1716800000200, "port": 9090, "requestedPort": 9090, "lastError": null, "enabled": true },
+    "mcp": { "status": "skipped", "since": 1716800000300, "port": null, "requestedPort": null, "lastError": null, "enabled": false, "extra": { "reason": "MCP disabled" } },
+    "main_loop": { "status": "ready", "since": 1716800001000, "port": null, "requestedPort": null, "lastError": null, "enabled": true }
+  },
+  "ports": {
+    "rpc": { "requested": 53550, "actual": 53550, "drifted": false },
+    "metrics": { "requested": 9090, "actual": 9090, "drifted": false }
+  },
+  "main_loop": {
+    "heartbeat_age_s": 1,
+    "iterations_total": 5821,
+    "exited": false,
+    "exit_reason": null
+  },
+  "errors": {
+    "uncaught_total": 0,
+    "unhandled_rejection_total": 0,
+    "last_uncaught": null
+  }
+}
+```
+
+### Probe configuration
+
+A liveness probe should treat any HTTP `503` (i.e. `status: failing`) as
+unhealthy. A readiness probe wanting to gate traffic until consensus
+participation can additionally inspect `dormant` / the `X-Demos-Dormant` header
+or require `boot.complete === true`.
+
+## `GET /health/subsystems`
+
+A slim sibling for ops dashboards that only need subsystem state. It returns the
+same `subsystems` snapshot plus the `dormant` flag, with a smaller body and no
+status roll-up:
+
+```json
+{
+  "dormant": false,
+  "subsystems": { "chain": { "status": "ready", "since": 1716800000000 } }
+}
+```
+
+## `GET /info`
+
+Returns identity and peering metadata rather than health. Useful for
+service-discovery and confirming which node answered:
+
+```json
+{
+  "version": "1.4.2",
+  "version_name": "mycelium",
+  "identity": "0x<public-key-hex>",
+  "connectionString": "http://node.example:53550",
+  "peerlist": []
+}
+```

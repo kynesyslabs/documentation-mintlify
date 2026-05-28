@@ -22,18 +22,21 @@ const { tlsn, tokenId } = await service.createTLSNotary({
     targetUrl: "https://api.bank.com/v1/accounts/balance"
 });
 
-// Perform attestation with selective disclosure
-const result = await tlsn.attest({
-    url: "https://api.bank.com/v1/accounts/balance",
-    headers: {
-        "Authorization": `Bearer ${bankToken}`
+// Perform attestation with selective disclosure.
+// Commit ranges are passed as the second argument, not inside the request.
+const result = await tlsn.attest(
+    {
+        url: "https://api.bank.com/v1/accounts/balance",
+        headers: {
+            "Authorization": `Bearer ${bankToken}`
+        }
     },
     // Only include the balance portion in the proof
-    commit: {
+    {
         sent: [{ start: 0, end: 100 }],
         recv: [{ start: 0, end: 200 }]  // Just the balance field
     }
-});
+);
 
 // Store proof on-chain
 await service.storeProof(tokenId, JSON.stringify(result.presentation), { storage: 'onchain' });
@@ -113,18 +116,21 @@ const { tlsn, tokenId } = await service.createTLSNotary({
     targetUrl: "https://api.hr-platform.com/v1/employee/status"
 });
 
-// Prove employment at a company
-const result = await tlsn.attest({
-    url: "https://api.hr-platform.com/v1/employee/status",
-    headers: {
-        "Authorization": `Bearer ${employeeToken}`
+// Prove employment at a company.
+// Commit ranges are passed as the second argument, not inside the request.
+const result = await tlsn.attest(
+    {
+        url: "https://api.hr-platform.com/v1/employee/status",
+        headers: {
+            "Authorization": `Bearer ${employeeToken}`
+        }
     },
     // Only commit the employment status portion, not salary or SSN
-    commit: {
+    {
         sent: [{ start: 0, end: 100 }],
         recv: [{ start: 0, end: 150 }]  // Just employment status fields
     }
-});
+);
 
 // Proves: Employed at Company X, Role: Engineer, Since: 2022
 // Hidden: Salary, SSN, performance data
@@ -169,10 +175,10 @@ const service = new TLSNotaryService(demos);
 const { tlsn, tokenId } = await service.createTLSNotary({
     targetUrl: "https://api.example.com/private-data"
 });
-const result = await tlsn.attest({
-    url: "https://api.example.com/private-data",
-    commit: { recv: [{ start: 0, end: 100 }] }  // Selective disclosure
-});
+const result = await tlsn.attest(
+    { url: "https://api.example.com/private-data" },
+    { sent: [], recv: [{ start: 0, end: 100 }] }  // Selective disclosure (second arg)
+);
 // Speed: 2-5s
 // On-chain: Proof metadata only
 // Privacy: Selective disclosure via commit ranges

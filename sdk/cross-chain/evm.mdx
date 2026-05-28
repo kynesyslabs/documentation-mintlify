@@ -156,16 +156,18 @@ const txHash = await instance.writeToContract(
 
 `writeToContract(contract, fnName, args, options?)` builds, signs, and broadcasts a state-changing transaction. The optional fourth argument accepts `{ gasLimit?: number; value?: string }` — `value` is the ETH amount as a decimal string and is parsed via `parseEther`.
 
-### Listening for events (Not implemented)
+### Listening for events
 
 You can listen for specific events or all events from a contract:
 
 ```ts
-// Listen for a specific event
-instance.listenForEvent("EventName", contractAddress, abi)
+// Listen for a specific event (contract, abi, event, timeout?)
+const eventData = await instance.listenForEvent(contractAddress, abi, "EventName", 5000)
 
-// Listen for all events
-instance.listenForAllEvents(contractAddress, abi)
+// Listen for all events (returns a function to remove the listener)
+const unsubscribe = instance.listenForAllEvents(contractAddress, abi, (...args) => {
+    console.log("event", args)
+})
 ```
 
 ### Cleaning up

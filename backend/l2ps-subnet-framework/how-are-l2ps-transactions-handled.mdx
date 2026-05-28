@@ -68,7 +68,7 @@ The `1 DEM` L2PS fee is burned (not credited to any account). Total L2PS tx fee 
 
 ### Step 3: Mempool Storage
 
-Validated transactions enter the L2PS-specific mempool, keyed by hash and L2PS UID. The mempool stores the encrypted blob, the resolved GCR edits, and the current status (`l2ps_pending` / `l2ps_batched` / `l2ps_confirmed`).
+Validated transactions enter the L2PS-specific mempool, keyed by hash and L2PS UID. The mempool stores the encrypted blob, the resolved GCR edits, and the current status (`pending` / `batched` / `confirmed`).
 
 ## Batch Aggregation
 
@@ -118,27 +118,27 @@ When a new L1 block is created, **L2PS Consensus** applies the batch:
 - Pending proofs for the block are loaded.
 - Each proof is verified.
 - The batch's GCR edits are applied to L1 state via `HandleGCR.apply(...)`.
-- Transaction statuses are advanced to `l2ps_confirmed`.
+- Transaction statuses are advanced to `confirmed`.
 
 ## Transaction Status Flow
 
 <Steps>
-  <Step title="⚡ Executed (l2ps_pending)" icon="bolt">
+  <Step title="⚡ Executed (pending)" icon="bolt">
     Validated locally, GCR edits generated **(instant)**
   </Step>
-  <Step title="📦 Batched (l2ps_batched)" icon="box">
+  <Step title="📦 Batched (batched)" icon="box">
     Included in an L1 batch transaction **(per block)**
   </Step>
-  <Step title="✓ Confirmed (l2ps_confirmed)" icon="check">
+  <Step title="✓ Confirmed (confirmed)" icon="check">
     L1 block finalized **(final)**
   </Step>
 </Steps>
 
 | Status            | Meaning                                | Reversible? |
 |-------------------|----------------------------------------|-------------|
-| `l2ps_pending`    | Validated locally, GCR edits generated | Yes (if batch fails) |
-| `l2ps_batched`    | Included in an L1 batch transaction    | Yes (if block fails) |
-| `l2ps_confirmed`  | L1 block finalized                     | No |
+| `pending`    | Validated locally, GCR edits generated | Yes (if batch fails) |
+| `batched`    | Included in an L1 batch transaction    | Yes (if block fails) |
+| `confirmed`  | L1 block finalized                     | No |
 
 ## Authenticated History Access
 

@@ -30,11 +30,11 @@ The test part of the module "just" creates the credentials and print out the pri
 However, the intended usage is:
 
 ```typescript
-import wallet from "@kynesyslabs/demosdk"
+import { PasskeyGenerator } from "@/wallet/passkeys/passkeys"
 
 [...]
 
-const privateKey = await wallet.generatePasskey()
+const privateKey = await new PasskeyGenerator().generate()
 ```
 
 This method returns a hexadecimal string containing the private key linked to the credentials derived from your FIDO2 device's `hmac_secret`.

@@ -31,18 +31,67 @@ A genesis snippet with a scheduled fork looks like:
 
 ```jsonc
 {
-  "accounts": { "...": "..." },
+  "balances": [ "..." ],
   "validators": [ "..." ],
   "forks": {
     "osDenomination": {
-      "activationHeight": 12345,
-      "description": "DEM→OS denomination change."
+      "activationHeight": 12345
     }
   }
 }
 ```
 
 A genesis with no `forks` section, or with `activationHeight: null`, leaves every fork unscheduled — the node behaves bit-identically to a pre-fork node.
+
+### Full genesis schema
+
+`data/genesis.json` has the following top-level structure:
+
+```jsonc
+{
+  "properties": {
+    "id": 1,              // numeric chain id
+    "name": "DEMOS",      // human-readable chain name
+    "currency": "DEM"     // native currency ticker
+  },
+  "mutables": {
+    "minBlocksForValidationOnlineStatus": 4
+  },
+  "forks": {
+    "osDenomination":   { "activationHeight": 0 },
+    "gasFeeSeparation": { "activationHeight": null, "treasuryAddress": "0x..." }
+  },
+  "balances": [
+    ["0xPUBKEY", "1000000000000000000"]   // [pubkey, balance] tuples (OS denomination)
+  ],
+  "timestamp": "1692734616",   // genesis block timestamp (unix seconds, string)
+  "status": "confirmed",
+  "validators": [
+    {
+      "address": "0x...",                  // validator pubkey
+      "status": "2",                       // validator state (see Validator Lifecycle)
+      "connection_url": "https://node2.demos.sh",  // or null
+      "staked_amount": "1000000000000000000",      // raw bigint string
+      "first_seen": 0,
+      "valid_at": 0
+    }
+  ]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `properties` | Chain identity: `id`, `name`, `currency`. |
+| `mutables` | Tunable genesis values such as `minBlocksForValidationOnlineStatus`. |
+| `forks` | Per-fork activation heights (see [Network Forks](/backend/network-forks/overview)). Every peer must agree on this section. |
+| `balances` | Bootstrap account balances as `[pubkey, balance]` tuples. The balance side may be a decimal string, integer, or bigint-string and is coerced to a `bigint` in OS denomination; malformed or negative values cause the node to fail loudly at load. |
+| `timestamp` | Genesis block timestamp (unix seconds, as a string). |
+| `status` | Genesis block status (e.g. `confirmed`). |
+| `validators` | Initial validator set. Each entry: `address`, `status`, `connection_url` (or `null`), `staked_amount` (raw bigint string), `first_seen`, `valid_at`. Validator state codes are documented in [Validator Lifecycle](/backend/validator-lifecycle/overview). |
+
+<Note>
+The `balances` array is applied **on top of** any restored snapshot rows (see `mergeGenesisBalances`), so a fresh single-validator chain typically ships with an empty `balances: []`. Account rows themselves follow the [`gcr_main` structure](/backend/global-change-registry/gcr-structure).
+</Note>
 
 ## Get the genesis from a healthy peer
 

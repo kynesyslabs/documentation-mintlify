@@ -1,0 +1,174 @@
+---
+title: "Metrics Reference"
+description: "The Prometheus metrics a Demos node exposes on /metrics, including names, types, labels, and histogram buckets."
+icon: "chart-line"
+---
+
+# Metrics Reference
+
+A Demos node ships a built-in Prometheus exporter. When enabled, a dedicated
+HTTP server serves the standard `GET /metrics` endpoint (and a simple
+`/health` / `/healthz` returning `{"status":"ok"}`) on its own port, separate
+from the RPC server.
+
+Every metric name is prefixed with `demos_`. In addition to the metrics below,
+the exporter also emits the default `prom-client` process/Node.js metrics
+(memory, CPU, event loop, GC), which are also `demos_`-prefixed.
+
+## Enabling
+
+Metrics are controlled by the `metrics` config block:
+
+| Config key | Default | Description |
+| ---------- | ------- | ----------- |
+| `metrics.enabled` | `true` | Master switch for the exporter. |
+| `metrics.port` | `9090` | Port the metrics HTTP server binds. |
+| `metrics.host` | `0.0.0.0` | Bind address. |
+
+See [Node Configuration](/backend/developers-testbed/node-configuration) for how
+these map to environment variables and the Docker Compose / Grafana stack that
+scrapes this endpoint.
+
+Collected gauges are refreshed on a 2.5s interval; counters are incremented at
+their call sites.
+
+## Core metrics
+
+### System
+
+| Metric | Type | Labels |
+| ------ | ---- | ------ |
+| `demos_node_uptime_seconds` | gauge | — |
+| `demos_node_info` | gauge | `version`, `node_id` |
+
+### Consensus and chain
+
+| Metric | Type | Labels / Buckets |
+| ------ | ---- | ---------------- |
+| `demos_consensus_rounds_total` | counter | — |
+| `demos_consensus_round_duration_seconds` | histogram | buckets: `0.1, 0.5, 1, 2, 5, 10, 30` |
+| `demos_block_height` | gauge | — |
+| `demos_mempool_size` | gauge | — |
+
+### Network and peers
+
+| Metric | Type | Labels / Buckets |
+| ------ | ---- | ---------------- |
+| `demos_peers_connected` | gauge | — |
+| `demos_peers_total` | gauge | — |
+| `demos_messages_sent_total` | counter | `type` |
+| `demos_messages_received_total` | counter | `type` |
+| `demos_peer_latency_seconds` | histogram | buckets: `0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5` (aggregated, no per-peer label) |
+
+### Transactions
+
+| Metric | Type | Labels / Buckets |
+| ------ | ---- | ---------------- |
+| `demos_transactions_total` | counter | `type`, `status` |
+| `demos_transactions_failed_total` | counter | `type`, `reason` |
+| `demos_tps` | gauge | — |
+| `demos_transaction_processing_seconds` | histogram | `type`; buckets: `0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5` |
+
+### API
+
+| Metric | Type | Labels / Buckets |
+| ------ | ---- | ---------------- |
+| `demos_api_requests_total` | counter | `method`, `endpoint`, `status_code` |
+| `demos_api_request_duration_seconds` | histogram | `method`, `endpoint`; buckets: `0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10` |
+| `demos_api_errors_total` | counter | `method`, `endpoint`, `error_code` |
+
+### IPFS and GCR
+
+| Metric | Type | Labels |
+| ------ | ---- | ------ |
+| `demos_ipfs_pins_total` | gauge | — |
+| `demos_ipfs_storage_bytes` | gauge | — |
+| `demos_ipfs_peers` | gauge | — |
+| `demos_ipfs_operations_total` | counter | `operation` |
+| `demos_gcr_accounts_total` | gauge | — |
+| `demos_gcr_total_supply` | gauge | — |
+
+## Observability metrics
+
+These mirror the subsystem registry and boot tracker that also back the
+[`/health`](/backend/operations/health-and-readiness) endpoint.
+
+| Metric | Type | Labels | Notes |
+| ------ | ---- | ------ | ----- |
+| `demos_subsystem_up` | gauge | `subsystem` | `1` when status is `ready`/`running`, else `0`. |
+| `demos_subsystem_skipped` | gauge | `subsystem` | `1` when intentionally skipped. |
+| `demos_subsystem_uptime_seconds` | gauge | `subsystem` | Seconds since the last state transition. |
+| `demos_subsystem_restart_total` | counter | `subsystem` | Transitions back to `running` after `failed`/`ready`. |
+| `demos_subsystem_error_total` | counter | `subsystem` | Errors recorded via `subsystemError()`. |
+| `demos_boot_step_status` | gauge | `step` | Enum: `0`=pending, `1`=running, `2`=ready, `3`=failed, `4`=skipped. |
+| `demos_boot_complete` | gauge | — | `1` when all boot steps are ready/skipped. |
+| `demos_dormant_mode` | gauge | — | `1` when the node booted with no peers. |
+| `demos_main_loop_heartbeat_seconds` | gauge | — | Seconds since the last main-loop tick. |
+| `demos_main_loop_iterations_total` | counter | — | Main-loop iterations since boot. |
+| `demos_port_drift` | gauge | `subsystem` | Actual minus requested port (`0` normally). |
+| `demos_uncaught_exception_total` | counter | `source` | `uncaughtException` handler invocations. |
+| `demos_unhandled_rejection_total` | counter | `source` | `unhandledRejection` handler invocations. |
+
+## Collector metrics
+
+Sampled live from node state and the host on each collection tick.
+
+### Block detail
+
+| Metric | Type | Labels |
+| ------ | ---- | ------ |
+| `demos_last_block_tx_count` | gauge | — |
+| `demos_seconds_since_last_block` | gauge | — |
+| `demos_last_block_timestamp` | gauge | — |
+
+### Host system
+
+| Metric | Type | Labels |
+| ------ | ---- | ------ |
+| `demos_system_cpu_usage_percent` | gauge | — |
+| `demos_system_memory_used_bytes` | gauge | — |
+| `demos_system_memory_total_bytes` | gauge | — |
+| `demos_system_memory_usage_percent` | gauge | — |
+| `demos_system_load_average_1m` | gauge | — |
+| `demos_system_load_average_5m` | gauge | — |
+| `demos_system_load_average_15m` | gauge | — |
+
+### Network I/O (per interface)
+
+| Metric | Type | Labels |
+| ------ | ---- | ------ |
+| `demos_system_network_rx_bytes_total` | gauge | `interface` |
+| `demos_system_network_tx_bytes_total` | gauge | `interface` |
+| `demos_system_network_rx_rate_bytes` | gauge | `interface` |
+| `demos_system_network_tx_rate_bytes` | gauge | `interface` |
+
+### Service and peer health
+
+| Metric | Type | Labels |
+| ------ | ---- | ------ |
+| `demos_service_docker_container_up` | gauge | `container` |
+| `demos_service_port_open` | gauge | `port`, `service` |
+| `demos_peer_online_count` | gauge | — |
+| `demos_peer_offline_count` | gauge | — |
+| `demos_peer_info` | gauge | `peer_id`, `url`, `status` (capped at 20 peers) |
+| `demos_node_http_health` | gauge | `endpoint` (`1`=responding) |
+| `demos_node_http_response_time_ms` | gauge | `endpoint` |
+| `demos_node_metadata` | gauge | `version`, `version_name`, `identity` (always `1`) |
+
+## Sample scrape
+
+```text
+# HELP demos_block_height Current block height
+# TYPE demos_block_height gauge
+demos_block_height 184213
+
+# HELP demos_subsystem_up Whether the named subsystem is in 'ready' or 'running' state (1) or not (0)
+# TYPE demos_subsystem_up gauge
+demos_subsystem_up{subsystem="chain"} 1
+demos_subsystem_up{subsystem="rpc"} 1
+demos_subsystem_up{subsystem="mcp"} 0
+
+# HELP demos_boot_complete 1 when every registered boot step is in ready/skipped, 0 otherwise
+# TYPE demos_boot_complete gauge
+demos_boot_complete 1
+```

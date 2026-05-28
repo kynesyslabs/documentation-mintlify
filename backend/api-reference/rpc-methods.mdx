@@ -1,0 +1,235 @@
+---
+title: "JSON-RPC Methods"
+description: "The node's JSON-RPC over HTTP interface: top-level methods and the nodeCall read-only handler registry."
+icon: "plug"
+---
+
+# JSON-RPC Methods
+
+Every Demos node exposes a single JSON-RPC entry point at `POST /`. Requests
+are dispatched by `processPayload` in
+`src/libs/network/rpcDispatch.ts`; the HTTP server that hosts it lives in
+`src/libs/network/server_rpc.ts`.
+
+## Request and response shape
+
+A request is a JSON object with a `method` string and a `params` array
+(validated by `isRPCRequest`):
+
+```json
+{
+  "method": "ping",
+  "params": []
+}
+```
+
+Every method returns an `RPCResponse`:
+
+```json
+{
+  "result": 200,
+  "response": "pong",
+  "require_reply": false,
+  "extra": null
+}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `result` | number | Status code (HTTP-like: `200` ok, `400` bad request, `401` unauthorized, `500` error, `501` method not implemented). |
+| `response` | any | Method payload (string, object, array, or number). |
+| `require_reply` | boolean | Whether the caller is expected to reply (used by peer routines). |
+| `extra` | any \| null | Optional auxiliary data (e.g. error details, block metadata). |
+
+Unknown methods return `result: 501` with `"Method not implemented: <method>"`.
+
+<Note>
+The server may attach `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and
+`X-RateLimit-Reset` headers to responses so SDK clients can self-throttle.
+</Note>
+
+## Top-level methods
+
+These are the `case` branches of the `processPayload` switch.
+
+| Method | Description |
+| --- | --- |
+| `ping` | Liveness check. Returns `result: 200`, `response: "pong"`. |
+| `execute` | Submit a transaction bundle (`BundleContent`) for execution via `manageExecution`. |
+| `nativeBridge` | Process a native bridge operation via `manageNativeBridge`. |
+| `hello_peer` | Peer handshake/introduction (`manageHelloPeer`). |
+| `mempool` | Merge a peer's mempool into the local mempool. |
+| `peerlist` | Exchange/handle peer lists. |
+| `auth` | Authentication message handling (`manageAuth`). |
+| `nodeCall` | Dispatch a read-only sub-method from the handler registry (see below). |
+| `login_request` | Browser login request (`handleLoginRequest`). |
+| `login_response` | Browser login response (`handleLoginResponse`). |
+| `consensus_routine` | Consensus protocol routine (`manageConsensusRoutines`). |
+| `gcr_routine` | Global Chain Registry routine (`manageGCRRoutines`). |
+| `bridge` | Cross-chain bridge routine (`manageBridges`). |
+| `web2ProxyRequest` | Proxy a Web2 HTTP request (`handleWeb2ProxyRequest`). |
+| `rate-limit/unblock` | **SUDO.** Unblock an array of IP addresses on the rate limiter. |
+| `getCampaignData` | **SUDO.** Return GCR campaign data. |
+| `awardPoints` | **SUDO.** Award points to accounts (`GCR.awardPoints`). |
+| `verifyProof` | Verify a ZK identity attestation proof and check nullifier reuse. |
+
+## SUDO-protected methods
+
+The following methods are listed in `PROTECTED_ENDPOINTS` and require the
+caller's authenticated public key to equal the node's `SUDO_PUBKEY`.
+Unauthorized callers receive `result: 401`, `response: "Unauthorized sender"`:
+
+- `rate-limit/unblock`
+- `getCampaignData`
+- `awardPoints`
+
+See [Protected Endpoints](/backend/operations/protected-endpoints) for how
+SUDO authentication is configured and enforced.
+
+## nodeCall sub-method registry
+
+`nodeCall` takes a single `NodeCall` object in `params[0]` and routes it to a
+named handler from `handlerRegistry`
+(`src/libs/network/handlers/index.ts`). Handlers are read-only and grouped by
+domain.
+
+```json
+{
+  "method": "nodeCall",
+  "params": [{ "method": "getLastBlockNumber" }]
+}
+```
+
+### Peer handlers
+
+Source: `peerHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `getPeerInfo` | Return this node's peer info. |
+| `getPeerlist` | Return the known peer list. |
+| `getPeerlistHash` | SHA-256 hash of the peer list. |
+| `getPeerIdentity` | This node's public key (hex). |
+| `getPeerTime` | Current node time (epoch ms). |
+
+### Block handlers
+
+Source: `blockHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `getGenesisDataHash` | Hash of the genesis data. |
+| `getPreviousHashFromBlockNumber` | Previous block hash given a block number. |
+| `getPreviousHashFromBlockHash` | Previous block hash given a block hash. |
+| `getBlockHeaderByNumber` | Block header by number. |
+| `getBlockHeaderByHash` | Block header by hash. |
+| `getLastBlockNumber` | Tip block number. |
+| `getLastBlock` | Full tip block. |
+| `getLastBlockHash` | Tip block hash. |
+| `getBlockByNumber` | Full block by number. |
+| `getBlocks` | Range/batch of blocks. |
+| `getBlockByHash` | Full block by hash (`hash` or `blockHash`). |
+| `getBlockTransactions` | Transactions in a block (`blockHash`). |
+
+### Transaction handlers
+
+Source: `transactionHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `getTransactions` | Query transactions. |
+| `getTransactionStatus` | Status of a transaction. |
+| `getTxByHash` | Single transaction by hash. |
+| `getTxsByHashes` | Multiple transactions by hashes. |
+| `getAllTxs` | Deprecated; returns `{}`. |
+| `getTransactionHistory` | History for an `address` + `type` (paginated). |
+| `getMempool` | Current mempool contents. |
+
+### Identity handlers
+
+Source: `identityHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `getAddressInfo` | GCR account info for an `address`. |
+| `getAddressNonce` | Current nonce for an `address`. |
+| `getNativeSubnetsTxs` | Native subnet transactions for a `subnetId`. |
+| `getTweet` | Fetch tweet data by `tweetUrl`. |
+| `getDiscordMessage` | Fetch Discord message by `discordUrl`. |
+| `resolveUdDomain` | Resolve an Unstoppable Domains `domain`. |
+
+### Validator handlers
+
+Source: `validatorHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `getValidatorInfo` | Validator record for an `address`. |
+| `getValidators` | Validator set (optionally at a `blockNumber`). |
+| `getStakedAmount` | Staked amount for a validator `address`. |
+
+### Governance handlers
+
+Source: `governanceHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `getNetworkParameters` | Active `NetworkParameters`. |
+| `getActiveProposals` | Open proposals (pending/approved/activating). |
+| `getProposalVotes` | Live tally for a `proposalId`. |
+| `getUpgradeHistory` | Proposals that reached `active`. |
+
+### Storage program handlers
+
+Source: `storageProgramHandlers.ts`. ACL-enforced read side.
+
+| Handler | Description |
+| --- | --- |
+| `getStorageProgram` | Read a storage program by address. |
+| `getStorageProgramAll` | Read the program's raw data. |
+| `getStorageProgramFields` | List top-level field names. |
+| `getStorageProgramFieldType` | Type of a field. |
+| `getStorageProgramItem` | Item from an array field. |
+| `getStorageProgramValue` | Value of a field. |
+| `getStorageProgramsByOwner` | Programs owned by an address. |
+| `hasStorageProgramField` | Whether a field exists. |
+| `searchStoragePrograms` | Search programs by name. |
+
+### Fork handlers
+
+Source: `forkHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `getNetworkInfo` | Fork-activation status (e.g. `osDenomination`) plus node version info. |
+
+### TLSNotary handlers
+
+Source: `tlsnotaryHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `requestTLSNproxy` | Request a TLS attestation proxy for a `targetUrl`. |
+| `tlsnotary.getInfo` | Notary/proxy URLs and public key. |
+| `tlsnotary.getToken` | Look up a token by `tokenId` or `txHash`. |
+| `tlsnotary.getTokenStats` | Aggregate token statistics. |
+
+### L2PS handlers
+
+Source: `l2psHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `getL2PSParticipationById` | Whether this node participates in an `l2psUid`. |
+| `getL2PSMempoolInfo` | Mempool summary for an `l2psUid`. |
+| `getL2PSTransactions` | Executed transactions for an `l2psUid` (optionally `since_timestamp`). |
+| `getL2PSAccountTransactions` | Signed/authenticated account history for an `l2psUid` + `address`. |
+
+### Misc handlers
+
+Source: `miscHandlers.ts`.
+
+| Handler | Description |
+| --- | --- |
+| `RELAY_TX` | Receive relayed transactions (DTR). |
+| `hots` | Easter-egg/diagnostic routine. |

@@ -6,17 +6,17 @@ icon: "arrows-rotate"
 
 # How is GCR Synced?
 
-GCR synchronization runs every time a block of transactions is applied to state. The pipeline lives in `HandleGCR.applyTransactions` (`/src/libs/blockchain/gcr/HandleGCR.ts:783`). It has three phases: **partition**, **concurrent group apply**, and **merge + persist**.
+GCR synchronization runs every time a block of transactions is applied to state. The pipeline lives in `HandleGCR.applyTransactions` (`/src/libs/blockchain/gcr/handleGCR.ts:636`). It has three phases: **partition**, **concurrent group apply**, and **merge + persist**.
 
 ## 1. Partition into independent groups
 
-`HandleGCR.partitionIndependentTxs(txs)` (`HandleGCR.ts:632`) groups transactions so that no two groups touch the same entity. The implementation uses a **union-find** over namespaced entity keys — sender pubkey, storage program address, TLS notary token id, etc. Two transactions that share any touched entity are unioned into the same group; transactions that touch nothing land in their own singleton group.
+`HandleGCR.partitionIndependentTxs(txs)` (`handleGCR.ts:477`) groups transactions so that no two groups touch the same entity. The implementation uses a **union-find** over namespaced entity keys — sender pubkey, storage program address, TLS notary token id, etc. Two transactions that share any touched entity are unioned into the same group; transactions that touch nothing land in their own singleton group.
 
 The invariant: across groups, no two transactions write to the same row. Within a group, the original transaction order is preserved (so e.g. nonce increments on a shared account stay sequential).
 
 ## 2. Apply groups concurrently
 
-`applyTransactions` runs groups through `runGroup(...)` in parallel waves of **`CONCURRENCY = 8`** at a time (`HandleGCR.ts:835`). The fan-out is bounded to protect the Postgres connection pool.
+`applyTransactions` runs groups through `runGroup(...)` in parallel waves of **`CONCURRENCY = 8`** at a time (`handleGCR.ts:691`). The fan-out is bounded to protect the Postgres connection pool.
 
 Inside each group, transactions apply sequentially — there is no further parallelism within a group, because intra-group transactions are by definition not independent.
 
@@ -34,7 +34,7 @@ After all waves finish, results are reduced:
 - Side effects are sorted by their original tx index so downstream execution sees the same ordering as a sequential baseline.
 - `assignedTxs` maps are merged. Senders only appear in one group (the union-find guarantees it), so the merge is conflict-free.
 
-A single `gcrWriteMutex.runExclusive(...)` block then persists `saveGCREditChanges(entities, mergedSideEffects)` and, if non-empty, `bulkUpdateAssignedTxs(assignedTxsUpdates)` (`HandleGCR.ts:881`). The mutex serializes against any other writer that holds it, so concurrent block applications can't interleave their persistence steps.
+A single `gcrWriteMutex.runExclusive(...)` block then persists `saveGCREditChanges(entities, mergedSideEffects)` and, if non-empty, `bulkUpdateAssignedTxs(assignedTxsUpdates)` (`handleGCR.ts:737`). The mutex serializes against any other writer that holds it, so concurrent block applications can't interleave their persistence steps.
 
 ## Properties
 
@@ -44,4 +44,4 @@ A single `gcrWriteMutex.runExclusive(...)` block then persists `saveGCREditChang
 
 ## Pre-filter
 
-Before partitioning, `applyTransactions` filters out non-state-mutating transactions (`HandleGCR.ts:815`). Only the state-touching subset enters the partition. Skipped txs are still tracked for logging/metrics but bypass the apply pipeline.
+Before partitioning, `applyTransactions` filters out non-state-mutating transactions (`handleGCR.ts:648`). Only the state-touching subset enters the partition. Skipped txs are still tracked for logging/metrics but bypass the apply pipeline.

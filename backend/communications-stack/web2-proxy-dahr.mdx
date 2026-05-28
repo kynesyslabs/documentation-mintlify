@@ -1,0 +1,111 @@
+---
+title: "Web2 Proxy (DAHR)"
+description: "Relay arbitrary HTTPS requests through a Demos node via the web2ProxyRequest RPC method, with deterministic response hashing for attestation."
+icon: "globe"
+---
+
+# Web2 Proxy (DAHR)
+
+The **DAHR** — *Data Agnostic HTTPS Relay* — lets a client send an arbitrary
+HTTP(S) request *through* a Demos node instead of making it directly. The node
+forwards the request to the target, returns the response, and computes
+deterministic hashes over the response so the result can later be attested.
+
+The feature lives under `src/features/web2/`:
+
+- `handleWeb2.ts` — entry point; sanitizes the request and asks the factory for a DAHR instance.
+- `dahr/DAHR.ts` — the relay session itself (owns a session ID and a `Proxy`).
+- `dahr/DAHRFactory.ts` — singleton that creates and tracks DAHR sessions, expiring them after 24 hours.
+- `proxy/Proxy.ts`, `proxy/ProxyFactory.ts` — the per-session HTTP proxy server that actually forwards traffic.
+- `validator.ts` — URL validation and SSRF protection.
+- `sanitizeWeb2Request.ts` — strips/redacts sensitive headers for logging and storage.
+
+## RPC entry point
+
+The proxy is reached through the JSON-RPC method **`web2ProxyRequest`**.
+
+- Handler: `src/libs/network/routines/transactions/handleWeb2ProxyRequest.ts`
+- Parser: `parseWeb2ProxyRequest` in `src/libs/utils/web2RequestUtils.ts`
+
+The handler switches on `web2Request.raw.action` (an `EnumWeb2Actions` value):
+
+<CardGroup cols={2}>
+  <Card title="CREATE" icon="plus">
+    Creates a DAHR session via `handleWeb2`. Returns the serialized DAHR
+    (`{ sessionId, web2Request }`) on success (HTTP-style `result: 200`), or an
+    error with `result: 400`.
+  </Card>
+  <Card title="START_PROXY" icon="play">
+    Looks up the DAHR by `sessionId`, validates/normalizes the target URL, then
+    forwards the request and returns the `IWeb2Result`.
+  </Card>
+</CardGroup>
+
+Any other action returns `Unsupported action: <action>`. The two action
+values verified in source are `EnumWeb2Actions.CREATE` and
+`EnumWeb2Actions.START_PROXY`.
+
+## Session model
+
+1. The client sends a `CREATE` request. `DAHRFactory.instance.createDAHR()`
+   builds a `DAHR`, which generates a unique `sessionId` and constructs a
+   `Proxy` bound to that ID.
+2. The factory stores the session in an in-memory map keyed by `sessionId`,
+   tracking `lastAccess`. Sessions older than **24 hours** are cleaned up
+   (their proxy is stopped) on the next `createDAHR` call.
+3. The client sends a `START_PROXY` request carrying the `sessionId`. The node
+   spins up a local proxy server (listening on an ephemeral port on
+   `0.0.0.0`), forwards the request to the validated target, and returns the
+   response.
+4. Requests to the local proxy are authorized with an `x-dahr-session-id`
+   header that must match the session ID (enforced when
+   `requireAuthForAll` is on, which defaults to production mode).
+
+## Request and result shapes
+
+`IWeb2Request` carries a `raw` object describing the request, plus `result`,
+`hash`, and `signature` fields. The `raw` object includes:
+
+- `action` — an `EnumWeb2Actions` value (`CREATE` / `START_PROXY`).
+- `url` — the target URL (validated and normalized before use).
+- `method` — the HTTP method (`Web2Method`).
+- `headers` — optional request headers.
+
+`IWeb2Result` is what `Proxy.sendHTTPRequest` resolves to:
+
+| Field | Description |
+| --- | --- |
+| `status` | Numeric HTTP status code from the target. |
+| `statusText` | HTTP status message. |
+| `headers` | Response headers from the target. |
+| `data` | Response body as a string. |
+| `responseHash` | SHA-256 over the exact UTF-8 bytes of the response body. |
+| `responseHeadersHash` | SHA-256 over the canonicalized response headers. |
+| `requestHash` | *(optional)* SHA-256 over the request body bytes, present only when a body was sent. |
+
+Header canonicalization for `responseHeadersHash` lowercases keys, drops
+volatile/hop-by-hop headers (`date`, `set-cookie`, `connection`,
+`content-length`, etc.), and sorts by key, so the hash is deterministic across
+intermediaries.
+
+## Security hardening
+
+The proxy is built to resist SSRF and credential leakage:
+
+- **URL validation** (`validateAndNormalizeHttpUrl`): only `http`/`https`
+  schemes; rejects embedded credentials, missing hostnames, `localhost`, and
+  loopback / private / link-local / reserved IP ranges (IPv4, IPv6, and
+  IPv4-mapped IPv6); canonicalizes host, strips default ports, removes
+  fragments.
+- **DNS preflight** (`Proxy`): the resolved address is re-checked against the
+  disallowed ranges at request time, in case DNS has changed since validation.
+- **Header sanitization** (`sanitizeWeb2Request.ts`): sensitive headers such as
+  `authorization`, `cookie`, `x-api-key`, and `x-auth-token` are stripped
+  before storage and redacted before logging.
+- **TLS verification**: certificate verification follows the node's `PROD`
+  flag (enabled in production, disabled in development).
+
+<Note>
+  The source notes a `TODO` that Web2 requests may eventually need to be signed
+  and may carry a fee. Treat that as not-yet-implemented.
+</Note>

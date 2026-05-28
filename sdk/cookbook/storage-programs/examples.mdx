@@ -1,11 +1,11 @@
 ---
 title: "Examples"
-description: "Concrete, end-to-end recipes for Storage Programs against the v3.1.0 SDK."
+description: "Concrete, end-to-end recipes for Storage Programs against the v4.0.3 SDK."
 icon: "code"
 ---
 # Storage Programs Examples
 
-Each recipe below uses the real v3.1.0 SDK surface:
+Each recipe below uses the real v4.0.3 SDK surface:
 
 - **`StorageProgram.*` static helpers** to build typed payloads.
 - **`demos.storagePrograms.sign(payload)`** to produce a signed transaction.
@@ -84,7 +84,7 @@ async function readProfile(storageAddress: string) {
 }
 ```
 
-`writeStorage` performs a shallow merge with the existing `variables` object — keys you don't pass are preserved.
+`writeStorage` replaces the entire `data` field — it does not merge. Keys you don't pass are dropped. Use the granular helpers (`setField`, `appendItem`, etc.) for partial updates.
 
 ## Example 2 — Restricted team workspace
 
@@ -149,7 +149,7 @@ Only the program's owner can call `updateAccessControl`.
 
 ## Example 3 — Binary attachment with metadata
 
-For non-JSON payloads (PDFs, images, archives), encode the bytes as base64 and use `encoding: "binary"`. Storage Programs are capped at **128 KB** per program — splitting larger blobs across multiple programs is the standard pattern.
+For non-JSON payloads (PDFs, images, archives), encode the bytes as base64 and use `encoding: "binary"`. Storage Programs are capped at **1 MB** (`MAX_SIZE_BYTES = 1,048,576` bytes) per program — splitting larger blobs across multiple programs is the standard pattern.
 
 ```typescript
 async function uploadDocument(

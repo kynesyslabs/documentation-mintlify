@@ -82,7 +82,7 @@ await demos.connectWallet(mnemonic);
 
 Then send the identity payload to the network using the `identities` instance as shown:
 
-Use `identities.inferIdentity` to create a transaction that adds your identity to the blockchain. Then broadcast the transaction using `demos.broadcast`.
+Use `identities.inferXmIdentity` to create a transaction that adds your identity to the blockchain. Then broadcast the transaction using `demos.broadcast`.
 
 ```typescript
 const identities = new Identities();

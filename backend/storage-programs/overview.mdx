@@ -35,10 +35,10 @@ Storage Programs are first-class key–value containers that live inside the Dem
                 ▼                                          │
 ┌──────────────────────────────────────────────────────────┐
 │          Global Change Registry (PostgreSQL)             │
-│  Table: GCR_Main                                         │
-│  Column: data (JSONB)                                    │
-│  - variables: user payload                              │
-│  - metadata: deployer, access control, timestamps, etc. │
+│  Table: gcr_storageprogram                               │
+│  Columns: data (JSONB), acl (JSONB), metadata (JSONB)    │
+│  - data: user payload                                   │
+│  - acl / metadata: access control, owner, sizes, etc.   │
 └──────────────────────────────────────────────────────────┘
                 ▲                                          │
                 │                                          │
@@ -49,7 +49,7 @@ Storage Programs are first-class key–value containers that live inside the Dem
 
 ## Persistence Model
 
-Each Storage Program row is serialized into the `GCR_Main.data` JSONB column with two top-level objects:
+Each Storage Program is stored as a row in the `gcr_storageprogram` table. The user payload lives in the `data` JSONB column, access rules in the `acl` JSONB column, and network-managed fields in the `metadata` JSONB column:
 
 ```json
 {
@@ -81,7 +81,7 @@ Each Storage Program row is serialized into the `GCR_Main.data` JSONB column wit
 Storage Program identifiers are derived on the client and verified by the network:
 
 ```
-address = stor-{SHA256(deployerAddress + programName + salt)}
+address = stor-{SHA256(deployer:programName:salt).substring(0, 40)}
 ```
 
 Consensus nodes recompute the address during CREATE to guarantee uniqueness. Because the derivation is deterministic, clients can safely reference programs before they exist and the backend can reject collisions or mismatched inputs.
@@ -90,9 +90,9 @@ Consensus nodes recompute the address during CREATE to guarantee uniqueness. Bec
 
 During transaction execution the validator layer enforces the configured mode:
 
-- **private / deployer-only** – Only the deploying address may create, read, or mutate data.
+- **owner** (deployer-only) – Only the deploying address may create, read, or mutate data.
 - **public** – Anyone can issue read RPCs; only the deployer can commit writes.
-- **restricted** – Membership lists are stored in metadata and validated during both read and write phases.
+- **restricted** – Allow lists (`acl.allowed`) are stored alongside the program and validated during both read and write phases.
 
 RPC handlers consult the same metadata before serving results, ensuring confidentiality even when requests originate outside the trusted perimeter.
 
@@ -100,9 +100,8 @@ RPC handlers consult the same metadata before serving results, ensuring confiden
 
 To keep Storage Programs fast to replicate and query, the backend validates:
 
-- Maximum serialized payload of **128 KB** per program.
+- Maximum serialized payload of **1 MB** per program.
 - Maximum nesting depth of **64** JSON levels.
-- Maximum key length of **256** characters.
 
 Requests exceeding these thresholds are rejected during consensus execution before they reach the data layer.
 

@@ -46,10 +46,10 @@ overridden by a passed governance proposal.
 
 | Variable | Maps to | Default |
 |----------|---------|---------|
-| `NETWORK_FEE` | `networkFee` | `10` |
-| `RPC_FEE` | `rpcFee` | `10` |
+| `NETWORK_FEE` | `networkFee` | `1` |
+| `RPC_FEE` | `rpcFee` | `1` |
 | `MIN_VALIDATOR_STAKE` | `minValidatorStake` | `"1000000000000000000"` (10^18) |
-| `CONSENSUS_TIME` | `blockTimeMs` (× 1000) | `1` (= 1000 ms block time) |
+| `CONSENSUS_TIME` | `blockTimeMs` (× 1000) | `10` (= 10000 ms block time; unset falls back to 1000 ms) |
 | `SHARD_SIZE` | `shardSize` (Phase 2 only) | `4` |
 
 ### Genesis defaults
@@ -62,8 +62,8 @@ returns these baked-in fallbacks:
 | `blockTimeMs` | `1000` |
 | `shardSize` | `4` |
 | `minValidatorStake` | `"1000000000000000000"` |
-| `networkFee` | `10` |
-| `rpcFee` | `10` |
+| `networkFee` | `1` |
+| `rpcFee` | `1` |
 | `featureFlags` | `{ l2ps: true, tlsn: true }` |
 
 ## Proposal lifecycle

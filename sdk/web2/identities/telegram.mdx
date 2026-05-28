@@ -312,7 +312,7 @@ After the confirmation block has been forged you can query all linked web2 ident
 import { Identities } from "@kynesyslabs/demosdk/abstraction";
 
 const identities = new Identities();
-const web2Ids = await identities.getWeb2Identities();
+const web2Ids = await identities.getWeb2Identities(demos);
 console.log(web2Ids);
 ```
 

@@ -1,0 +1,113 @@
+---
+title: "Protected Endpoints"
+description: "The SUDO-gated RPC methods a Demos node exposes (rate-limit/unblock, getCampaignData, awardPoints), how authorization works, and their parameters."
+icon: "user-lock"
+---
+
+# Protected Endpoints
+
+A small set of RPC methods are reserved for the node operator. They are gated on
+the caller's authenticated public key matching the node's configured SUDO key.
+Any other sender is rejected before the handler runs.
+
+## Authorization
+
+Protected methods are dispatched through the same `POST /` RPC entry point as
+every other method, but are checked against an allow-list before execution:
+
+```text
+PROTECTED_ENDPOINTS = { "rate-limit/unblock", "getCampaignData", "awardPoints" }
+```
+
+When the requested `method` is in this set, the dispatcher compares the
+authenticated `sender` (the request's recovered public key) against
+`getSharedState.SUDO_PUBKEY`. If they do not match, the call returns immediately:
+
+```json
+{
+  "result": 401,
+  "response": "Unauthorized sender",
+  "require_reply": false,
+  "extra": null
+}
+```
+
+<Note>
+The `401` is returned inside the RPC response body (the HTTP status is still
+`200`). Clients must inspect `result`, not the HTTP code, to detect an
+authorization failure on these methods.
+</Note>
+
+### Configuring the SUDO key
+
+`SUDO_PUBKEY` is sourced from the `core.sudoPubkey` config key, which defaults to
+`null`. While it is unset, no sender can satisfy the check, so every protected
+method is effectively closed. Set it to the operator's public key (hex) to
+enable these methods.
+
+| Config key | Default | Description |
+| ---------- | ------- | ----------- |
+| `core.sudoPubkey` | `null` | Public key authorized to call protected RPC methods. |
+
+See [RPC Methods](/backend/api-reference/rpc-methods) for the full method list
+and how requests are signed and authenticated.
+
+## Methods
+
+### `rate-limit/unblock`
+
+Lifts rate-limit blocks on one or more client IPs.
+
+- **Params**: a JSON array of IP address strings (the `params` array itself).
+  A non-array input returns `result: 400` with `"Invalid input. Expected an array of strings."`
+- **Returns**: `result: 200` with `response.message` and a per-IP `response.results` summary.
+
+```json
+{
+  "method": "rate-limit/unblock",
+  "params": ["203.0.113.5", "198.51.100.20"]
+}
+```
+
+### `getCampaignData`
+
+Returns the current incentive-campaign data from the GCR.
+
+- **Params**: none.
+- **Returns**: `result: 200` with the campaign data in `response`.
+
+### `awardPoints`
+
+Awards incentive points to a batch of accounts. Accounts may be described as
+web2 social handles, cross-chain (XM) addresses, or native Demos addresses.
+
+- **Params**: `params[0]` must be an object with a `message` field holding an
+  array of account descriptors. A missing `message` returns `result: 400` with
+  `{ "error": "Invalid params: missing message" }`.
+- **Returns**: `result: 200` with `response.awardedAccounts`.
+
+Each descriptor carries a numeric `points` field plus one of the following shapes:
+
+| Descriptor | Fields | Example |
+| ---------- | ------ | ------- |
+| Web2 | `username`, `platform` (`twitter` \| `discord` \| `telegram` \| `github`) | `{ "username": "alice", "platform": "twitter", "points": 100 }` |
+| Cross-chain (XM) | `chain` (e.g. `eth.mainnet`), `address` | `{ "chain": "eth.mainnet", "address": "0xabc...", "points": 50 }` |
+| Native | `address` | `{ "address": "0xdef...", "points": 25 }` |
+
+```json
+{
+  "method": "awardPoints",
+  "params": [
+    {
+      "message": [
+        { "username": "alice", "platform": "twitter", "points": 100 },
+        { "chain": "eth.mainnet", "address": "0xabc...", "points": 50 },
+        { "address": "0xdef...", "points": 25 }
+      ]
+    }
+  ]
+}
+```
+
+See the [Points System](/backend/incentives/points-system) for how points and
+campaigns are tracked.

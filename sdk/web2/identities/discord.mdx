@@ -95,7 +95,7 @@ A successful transaction response should look like this:
 After the confirmation block has been forged, you can retrieve all your linked accounts as shown:
 
 ```typescript
-const web2Ids = await identities.getWeb2Identities()
+const web2Ids = await identities.getWeb2Identities(demos)
 ```
 
 The response should look like this:
@@ -156,6 +156,4 @@ The following Discord URL formats are supported for message-based verification:
 
 1. Standard message URL: `https://discord.com/channels/{guildId}/{channelId}/{messageId}`
 2. PTB (Public Test Build): `https://ptb.discord.com/channels/{guildId}/{channelId}/{messageId}`
-3. Canary: `https://canary.discord.com/channels/{guildId}/{channelId}/{messageId}`
-4. Legacy domain: `https://discordapp.com/channels/{guildId}/{channelId}/{messageId}`
 
