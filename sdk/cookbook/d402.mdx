@@ -1,0 +1,301 @@
+---
+title: "D402 — Agent Payments over HTTP 402"
+description: "Gate any HTTP route behind an on-chain DEMOS payment using the d402Required middleware on the server and the D402Client on the client. The agent hits the route, gets a 402 challenge, pays on-chain, and retries with an X-Payment-Proof header."
+icon: "credit-card"
+---
+
+# D402 — Agent Payments over HTTP 402
+
+**D402** turns the long-dormant `HTTP 402 Payment Required` status code into a working settlement loop on the DEMOS Network. A server gates a route; an unpaid request gets a `402` response describing exactly what to pay and to whom; the client pays on-chain, then **retries the same request with the transaction hash in an `X-Payment-Proof` header**. The server verifies that payment against the requirement and serves the resource. It is purpose-built for **agent-to-agent commerce** — an autonomous client can discover the price, settle it, and unblock itself with no human in the loop.
+
+<Info>
+D402 ships as a dedicated subpath export of the SDK: `@kynesyslabs/demosdk/d402` (full), `@kynesyslabs/demosdk/d402/server` (gate routes), and `@kynesyslabs/demosdk/d402/client` (pay and retry). The server middleware is Express-compatible.
+</Info>
+
+## When to use it
+
+- A **paywalled API or resource** where each call costs a fixed amount of DEM.
+- **Machine-payable endpoints** — an agent that needs to pay per request without a checkout UI.
+- **Metered microtransactions** where the price is small, fixed per resource, and settlement must be verifiable on-chain.
+
+If you need streaming subscriptions, refunds, or escrow, D402 is a building block, not the whole story — it proves a single payment for a single resource.
+
+## Install
+
+<CodeGroup>
+```bash bun
+bun add @kynesyslabs/demosdk@latest
+```
+
+```bash npm
+npm install @kynesyslabs/demosdk@latest
+```
+</CodeGroup>
+
+```typescript
+// Server side
+import { d402Required, D402Server } from "@kynesyslabs/demosdk/d402/server"
+
+// Client side
+import { D402Client } from "@kynesyslabs/demosdk/d402/client"
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+
+// Or import everything from the top-level d402 subpath
+import { d402Required, D402Client } from "@kynesyslabs/demosdk/d402"
+```
+
+<Note>
+**Denomination — get this right or you will overcharge by a billion.** DEMOS uses `OS_PER_DEM = 10^9`, so **1 DEM = 1,000,000,000 OS** and **5 DEM = `5000000000` OS** (a string), **not** `5000000000000000000`. There is no `10^18` "wei"-style unit on DEMOS. Always derive amounts with `denomination.demToOs(5)` rather than typing zeros by hand:
+
+```typescript
+import { denomination } from "@kynesyslabs/demosdk"
+
+denomination.demToOs(5)            // => 5000000000n   (5 DEM in OS)
+denomination.demToOs(5).toString() // => "5000000000"  (string for the wire)
+```
+
+The `amount` field on a D402 requirement is dual-shape: it accepts a legacy `number` of whole DEM (deprecated) **or** a decimal **string** of OS (preferred). When in doubt, pass `denomination.demToOs(dem).toString()`.
+</Note>
+
+## Server — gate a route with `d402Required`
+
+`d402Required(options)` returns an Express middleware. Mount it in front of any handler. If the request carries no `X-Payment-Proof` header, the middleware short-circuits with a `402` and the payment requirement. If a proof is present, the middleware verifies it on-chain and only calls `next()` when the payment matches the requirement exactly.
+
+### Options (`D402MiddlewareOptions`)
+
+| Option | Type | Required | Purpose |
+| --- | --- | --- | --- |
+| `amount` | `number \| string` | yes | Price of the resource. Pass a decimal **string of OS** (preferred — e.g. `denomination.demToOs(5).toString()`) or a legacy `number` of whole DEM. |
+| `resourceId` | `string` | yes | Identifier for the gated resource. Embedded in the payment memo as `resourceId:<id>` and re-checked at verify time, so a proof for resource A cannot unlock resource B. |
+| `rpcUrl` | `string` | yes | DEMOS RPC node used to fetch and verify the payment transaction (e.g. `https://node2.demos.sh`). |
+| `recipient` | `string` | no* | Merchant address that must receive the payment. *Required unless you set `req.d402Recipient` upstream (see dynamic recipient below). |
+| `description` | `string` | no | Human-readable description echoed in the 402 body and appended to the memo. |
+| `cacheTTL` | `number` | no | Seconds to cache a verified payment so repeated retries don't re-hit RPC. Default `300` (5 minutes). |
+
+<Steps>
+  <Step title="Gate the route">
+    Mount `d402Required` in the middleware chain for the route you want to charge for.
+
+    ```typescript
+    import express from "express"
+    import { d402Required } from "@kynesyslabs/demosdk/d402/server"
+    import { denomination } from "@kynesyslabs/demosdk"
+
+    const app = express()
+
+    app.get(
+      "/premium-article",
+      d402Required({
+        // 5 DEM, expressed as OS string (1 DEM = 10^9 OS)
+        amount: denomination.demToOs(5).toString(), // "5000000000"
+        resourceId: "article-123",
+        rpcUrl: "https://node2.demos.sh",
+        recipient: "0x742d35cc6634c0532925a3b844bc9e7595f0beb00000000000000000000000000",
+        description: "Premium article #123",
+        cacheTTL: 300,
+      }),
+      (req, res) => {
+        // Reached only after a verified, matching payment.
+        // The middleware attaches verified details to req.d402Payment:
+        const { from, to, amount, txHash } = (req as any).d402Payment
+        console.log(`Paid by ${from} -> ${to}: ${amount} OS (tx ${txHash})`)
+
+        res.json({ article: "Premium content goes here." })
+      },
+    )
+
+    app.listen(3000)
+    ```
+  </Step>
+
+  <Step title="Understand the 402 challenge it emits">
+    When no `X-Payment-Proof` header is present, the middleware responds with HTTP **402** and a JSON body equal to the `D402PaymentRequirement`:
+
+    ```json
+    HTTP/1.1 402 Payment Required
+    Content-Type: application/json
+
+    {
+      "amount": "5000000000",
+      "recipient": "0x742d35cc6634c0532925a3b844bc9e7595f0beb00000000000000000000000000",
+      "resourceId": "article-123",
+      "description": "Premium article #123"
+    }
+    ```
+
+    This body is everything the client needs to construct and settle the payment: how much (`amount` in OS), to whom (`recipient`), and for what (`resourceId`, woven into the memo).
+  </Step>
+
+  <Step title="(Optional) Set the recipient per request">
+    If you omit `recipient` from the options, the middleware reads it from `req.d402Recipient`. Set it in an upstream middleware to charge into different merchant wallets per route or per tenant:
+
+    ```typescript
+    app.use("/store/:merchant", (req, res, next) => {
+      ;(req as any).d402Recipient = lookupMerchantAddress(req.params.merchant)
+      next()
+    })
+
+    app.get(
+      "/store/:merchant/item",
+      d402Required({
+        amount: denomination.demToOs(1).toString(),
+        resourceId: "item-sku-001",
+        rpcUrl: "https://node2.demos.sh",
+        // no `recipient` here — taken from req.d402Recipient
+      }),
+      (req, res) => res.json({ ok: true }),
+    )
+    ```
+
+    If neither `recipient` nor `req.d402Recipient` is set, the middleware returns `500 { error: "Server misconfiguration: recipient address not provided" }`.
+  </Step>
+</Steps>
+
+## Client — pay and retry with `D402Client`
+
+`D402Client` wraps a connected `Demos` instance. Its `handlePaymentRequired()` method does the full loop for you: build the `d402_payment` transaction, sign and broadcast it, then re-issue the original request with the `X-Payment-Proof` header set to the transaction hash.
+
+<Steps>
+  <Step title="Connect a wallet and construct the client">
+    ```typescript
+    import { Demos } from "@kynesyslabs/demosdk/websdk"
+    import { D402Client } from "@kynesyslabs/demosdk/d402/client"
+
+    const demos = new Demos()
+    await demos.connect("https://node2.demos.sh")
+    await demos.connectWallet(process.env.MNEMONIC!) // wallet pays the bill
+
+    const d402 = new D402Client(demos)
+    ```
+  </Step>
+
+  <Step title="Hit the resource and detect the 402">
+    ```typescript
+    const url = "http://localhost:3000/premium-article"
+
+    let response = await fetch(url, { method: "GET" })
+
+    if (response.status === 402) {
+      // The body is the payment requirement emitted by d402Required
+      const requirement = await response.json()
+      // requirement = { amount, recipient, resourceId, description? }
+
+      response = await d402.handlePaymentRequired(requirement, url, {
+        method: "GET",
+      })
+    }
+
+    // 200 OK — payment verified, resource served
+    const data = await response.json()
+    console.log(data) // { article: "Premium content goes here." }
+    ```
+  </Step>
+
+  <Step title="What handlePaymentRequired does internally">
+    The convenience method is a thin wrapper around three lower-level steps you can also call yourself for finer control:
+
+    ```typescript
+    // 1. Build an unsigned d402_payment transaction from the requirement.
+    //    The memo is set to `resourceId:<id>` (or `resourceId:<id> - <description>`),
+    //    which the server re-checks at verify time.
+    const payment = await d402.createPayment(requirement)
+
+    // 2. Sign + broadcast it on DEMOS. Returns the settlement result,
+    //    whose `hash` is the payment proof.
+    const result = await d402.settle(payment) // D402SettlementResult
+    if (!result.success) {
+      throw new Error(`Payment failed: ${result.message}`)
+    }
+
+    // 3. Retry the original request with the proof header.
+    const retried = await fetch(url, {
+      method: "GET",
+      headers: { "X-Payment-Proof": result.hash },
+    })
+    ```
+
+    `D402SettlementResult` is `{ success: boolean, hash: string, blockNumber?: number, message?: string }`. The `hash` is the value you send as `X-Payment-Proof`. If the wallet is not connected, `createPayment` throws `Error("Wallet not connected")`.
+  </Step>
+</Steps>
+
+## The round-trip — what actually proves payment
+
+The header value (`X-Payment-Proof`) is **the DEMOS transaction hash**, not a signature or a token. Verification re-derives the truth from the chain rather than trusting the client. Inside `D402Server.verify()` -> `validatePayment()`:
+
+<Steps>
+  <Step title="Fetch the transaction">
+    The server `POST`s the hash to `${rpcUrl}/getTransaction` to retrieve the full transaction object. A non-`ok` response means the proof is invalid.
+  </Step>
+  <Step title="Verify on-chain">
+    It then `POST`s the transaction to `${rpcUrl}/d402/verify`, which returns `{ valid, verified_from, verified_to, verified_amount, timestamp }`. This is the authoritative on-chain confirmation that the payment settled.
+  </Step>
+  <Step title="Match against the requirement">
+    `validatePayment()` enforces all three of these — any mismatch fails the request:
+
+    - **Recipient** — `verified_to` must equal `requirement.recipient`.
+    - **Amount** — both sides are normalised to OS `bigint` (via the internal `_normalizeD402AmountToOsBigint`) and the payment must be **>=** the required amount. Normalising to `bigint` is deliberate: a naive string compare (`"5000000000" < "5"`) or `Number()` coercion above `2^53` would silently accept underpayment.
+    - **Memo / resource binding** — `verified_memo` must start with `resourceId:<id>`. This is what stops a proof bought for one resource from unlocking another.
+  </Step>
+  <Step title="Cache + proceed">
+    A valid payment is cached for `cacheTTL` seconds (keyed by hash) so client retries within the window don't re-hit RPC. The middleware attaches `req.d402Payment = { from, to, amount, txHash }` and calls `next()`.
+  </Step>
+</Steps>
+
+<Info>
+**Idempotent retries.** Because the proof is a transaction hash and verified payments are cached, the client can safely retry the same request repeatedly with the same `X-Payment-Proof` within the TTL window — it will be served from cache without a second charge or a second RPC round-trip.
+</Info>
+
+## Error & edge handling
+
+| Situation | HTTP status | Body / behavior |
+| --- | --- | --- |
+| No `X-Payment-Proof` header | `402` | The `D402PaymentRequirement` JSON (the challenge). Expected on the first hit. |
+| Proof present but on-chain verify fails | `403` | `{ "error": "Invalid payment proof" }` |
+| Verified, but recipient / amount / resource don't match | `403` | `{ "error": "Payment does not match requirements", "details": { expected_recipient, expected_amount, expected_resource } }` |
+| `recipient` missing in options **and** `req.d402Recipient` | `500` | `{ "error": "Server misconfiguration: recipient address not provided" }` |
+| RPC unreachable / verifier throws | `500` | `{ "error": "Payment verification failed" }` |
+| Wallet not connected on client | — | `D402Client.createPayment` throws `Error("Wallet not connected")` |
+| Broadcast fails on client | — | `settle()` returns `{ success: false, hash, message }`; `handlePaymentRequired` throws `Payment failed: <message>` |
+
+Client-side defensive pattern:
+
+```typescript
+try {
+  let response = await fetch(url)
+  if (response.status === 402) {
+    const requirement = await response.json()
+    response = await d402.handlePaymentRequired(requirement, url, { method: "GET" })
+  }
+  if (!response.ok) {
+    // 403 -> proof rejected; 500 -> server/RPC problem. Inspect the body.
+    const err = await response.json().catch(() => ({}))
+    throw new Error(`Resource unavailable (${response.status}): ${err.error ?? "unknown"}`)
+  }
+  return await response.json()
+} catch (e) {
+  // Payment failed to settle, wallet not funded, or resource still gated.
+  console.error("D402 flow failed:", e)
+  throw e
+}
+```
+
+<Warning>
+**Amount must clear, not just round-trip.** The server accepts payment that is **>=** the requirement, so underpayment is rejected at `validatePayment` (-> `403`), but overpayment is accepted and **not refunded**. Compute the amount from the 402 body's `amount` field — don't hardcode it on the client.
+</Warning>
+
+## API reference
+
+**Server** (`@kynesyslabs/demosdk/d402/server`)
+
+- `d402Required(options: D402MiddlewareOptions)` — Express middleware factory.
+- `D402Server` — `verify(txHash)`, `require(requirement)`, `validatePayment(verification, requirement)`, `clearCache()`.
+- Types: `D402MiddlewareOptions`, `D402Request`, `D402ServerConfig`, `D402PaymentRequirement`, `D402VerificationResult`, `CachedPayment`.
+
+**Client** (`@kynesyslabs/demosdk/d402/client`)
+
+- `D402Client(demos: Demos)` — `createPayment(requirement)`, `settle(payment)`, `handlePaymentRequired(requirement, url, requestInit?)`.
+- Types: `D402PaymentRequirement`, `D402SettlementResult`.
+
+<Info>
+For the full denomination reference (`demToOs`, `osToDem`, `parseOsString`, fork detection), see [Amounts & Denominations](/sdk/websdk/transactions/denominations).
+</Info>
