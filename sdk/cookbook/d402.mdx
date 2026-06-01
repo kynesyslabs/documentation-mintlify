@@ -59,7 +59,7 @@ The `amount` field on a D402 requirement is dual-shape: it accepts a legacy `num
 
 ## Server — gate a route with `d402Required`
 
-`d402Required(options)` returns an Express middleware. Mount it in front of any handler. If the request carries no `X-Payment-Proof` header, the middleware short-circuits with a `402` and the payment requirement. If a proof is present, the middleware verifies it on-chain and only calls `next()` when the payment matches the requirement exactly.
+`d402Required(options)` returns an Express middleware. Mount it in front of any handler. If the request carries no `X-Payment-Proof` header, the middleware short-circuits with a `402` and the payment requirement. If a proof is present, the middleware verifies it on-chain and only calls `next()` when the payment satisfies the requirement — correct recipient, amount **>=** the required amount (overpayment is accepted, not refunded), and matching resource memo (see [Match against the requirement](#match-against-the-requirement) below).
 
 ### Options (`D402MiddlewareOptions`)
 
