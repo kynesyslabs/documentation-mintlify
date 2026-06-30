@@ -1,0 +1,72 @@
+---
+title: "Try it in the browser (POC)"
+description: "Register two peers and exchange messages from a browser using the L2PS Wallet POC's Messaging tab — no code required."
+icon: "flask"
+---
+
+# Try it in the browser (POC)
+
+The [`l2ps-poc`](https://github.com/kynesyslabs/l2ps-poc) app ships a **💬 Messaging** tab that talks to the L2PS messaging server directly over WebSocket, so you can register wallets and exchange messages without writing any code. It's the fastest way to confirm the server's `register → send → receive → offline-queue` path end to end.
+
+<Note>
+A **peer is a wallet** (an Ed25519 key), not a node. Two peers = two mnemonics, both connected to the **same** messaging server. Run the POC in two browser sessions to drive two peers at once. Messaging is **free** — no DEM or balance required.
+</Note>
+
+## 1. Start a node with messaging enabled
+
+In the `node` repo, create a matching L2PS subnet and start the node with the messaging server on port `3006`:
+
+```bash
+./scripts/l2ps-create-subnet.sh testnet_l2ps_001        # once — creates data/l2ps/<uid>/
+L2PS_MESSAGING_ENABLED=true L2PS_MESSAGING_PORT=3006 docker compose up -d
+# look for: [L2PS-IM] Messaging server started on port 3006
+```
+
+## 2. Point the POC at the node
+
+In `l2ps-poc/.env`:
+
+```bash
+VITE_NODE_URL="http://localhost:53550"
+VITE_MSG_WS_URL="ws://localhost:3006"   # the messaging WebSocket
+VITE_L2PS_UID="testnet_l2ps_001"        # must match the subnet you created
+```
+
+Then `npm install && npm run dev`.
+
+## 3. Chat between two peers
+
+<Steps>
+<Step title="Open two sessions">
+Open the POC in two browser sessions — e.g. a normal window and an incognito window — so each holds its own wallet.
+</Step>
+<Step title="Log in with two wallets">
+In each session: **Login → Generate** a (different) mnemonic → Connect.
+</Step>
+<Step title="Register both peers">
+In each: open **💬 Messaging → Connect & Register**. The status turns green `registered` and online peers appear.
+</Step>
+<Step title="Send a message">
+Copy one peer's key from the `You: 0x…` line into the other's **recipient** field (or click the peer chip), type a message, and **Send** — it shows up in the other session.
+</Step>
+<Step title="Test the offline queue">
+Disconnect peer B, send from A, then re-register B — the message is delivered `from queue`.
+</Step>
+</Steps>
+
+## What it does (and doesn't)
+
+The tab implements the wire protocol directly (see `src/hooks/useMessaging.ts`): it signs the `register:{publicKey}:{timestamp}` proof with the wallet's ed25519 key, then exchanges `send` / `message` frames. The server requires a non-empty `ciphertext` **and** `nonce`, enforces size caps (message ≤ 256 KB, ciphertext ≤ 128 KB), and queues up to 200 offline messages per sender.
+
+<Warning>
+This is a **transport test**. The tab base64-wraps plaintext into the `ciphertext` field — it is **not** end-to-end encrypted. For real ML-KEM/x25519 + AES-GCM encryption, use the SDK's `L2PSMessagingPeer` (see the [Quickstart](/sdk/websdk/instant-messaging/quickstart)). The POC proves the server path; production apps should go through the SDK.
+</Warning>
+
+<CardGroup cols={2}>
+<Card title="Quickstart (SDK)" icon="bolt" href="/sdk/websdk/instant-messaging/quickstart">
+Build a real client with `L2PSMessagingPeer`.
+</Card>
+<Card title="l2ps-poc repository" icon="github" href="https://github.com/kynesyslabs/l2ps-poc">
+Source for the Messaging tab.
+</Card>
+</CardGroup>
