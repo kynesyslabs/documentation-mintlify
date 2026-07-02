@@ -88,6 +88,7 @@
                 "group": "Transactions",
                 "pages": [
                   "sdk/websdk/transactions/overview",
+                  "sdk/websdk/transactions/programmatic-transactions",
                   "sdk/websdk/transactions/denominations",
                   "sdk/websdk/transactions/creating-a-transaction",
                   "sdk/websdk/transactions/signing-a-transaction",
