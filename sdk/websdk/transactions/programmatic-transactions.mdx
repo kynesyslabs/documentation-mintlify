@@ -187,6 +187,87 @@ await demos.run.tokens.mint(tokenAddress, to, "1000000000")
 await demos.run.tokens.burn(tokenAddress, from, "1000000000")
 ```
 
+## Using `demos.run` as agent tools
+
+Every `demos.run.*` method already has the exact shape an LLM tool/function call
+expects: a **stable name** (`pay`, `attest.github`, `tokens.transfer`), **typed
+parameters** (a recipient string, a DEM/OS amount, an options object), and a
+**structured result** (the uniform `ProgrammaticTxResult`). That is the same
+contract as a tool-call schema — a name, a typed input object, and a JSON-shaped
+output — so exposing these methods to an agent takes almost no glue: map each
+method onto one tool definition and let the handler forward the arguments to the
+SDK.
+
+The [Model Context Protocol](/backend/mcp-server/overview) (MCP) makes this
+concrete. The server below wraps a connected `Demos` instance and publishes two
+`demos.run.*` methods as MCP tools; any MCP-capable agent can then call them.
+
+```typescript title="demos-run-mcp.ts"
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+import { z } from "zod"
+import { Demos } from "@kynesyslabs/demosdk/websdk"
+import { denomination } from "@kynesyslabs/demosdk"
+
+// One connected, wallet-loaded instance backs every tool call.
+const demos = await Demos.start(process.env.DEMOS_RPC!, process.env.DEMOS_MNEMONIC!)
+
+const server = new McpServer({ name: "demos-run", version: "1.0.0" })
+
+// demos.run.pay(to, amount, options?) -> ProgrammaticTxResult
+server.registerTool(
+    "demos_pay",
+    {
+        title: "Pay DEM",
+        description: "Send native DEM to an address (build, sign, confirm, broadcast in one call).",
+        inputSchema: {
+            to: z.string().describe("Recipient DEMOS address"),
+            amountDem: z.number().positive().describe("Amount in DEM"),
+            maxFee: z.number().nullable().optional().describe("Fee ceiling in DEM (default 5, null disables)"),
+        },
+    },
+    async ({ to, amountDem, maxFee }) => {
+        // Typed params in, ProgrammaticTxResult out — the tool schema mirrors the method.
+        const res = await demos.run.pay(to, denomination.demToOs(amountDem), { maxFee })
+        return {
+            content: [{ type: "text", text: JSON.stringify({
+                hash: res.hash,
+                broadcasted: res.broadcasted,
+                feeDem: res.feeDem,
+            }) }],
+        }
+    },
+)
+
+// demos.run.attest.github(gistProofUrl) -> ProgrammaticTxResult
+server.registerTool(
+    "demos_attest_github",
+    {
+        title: "Attest GitHub identity",
+        description: "Link a GitHub identity to the wallet via a public gist proof.",
+        inputSchema: {
+            gistProofUrl: z.string().url().describe("URL of the gist proving ownership"),
+        },
+    },
+    async ({ gistProofUrl }) => {
+        const res = await demos.run.attest.github(gistProofUrl)
+        return {
+            content: [{ type: "text", text: JSON.stringify({ hash: res.hash, feeDem: res.feeDem }) }],
+        }
+    },
+)
+
+await server.connect(new StdioServerTransport())
+```
+
+<Warning>
+An agent holding these tools can move funds. Keep the `maxFee` ceiling in place,
+consider `confirm: "manual"` or a `confirm` callback (see above) for a
+human-in-the-loop approval step, and never expose the mnemonic to the model — the
+wallet lives in the server, only tool names and typed arguments cross the
+boundary.
+</Warning>
+
 ## Coverage & caveats
 
 `demos.run.*` namespaces: `pay` / `transfer`, `attest.*` (web2 + web3/xm + pqc +
