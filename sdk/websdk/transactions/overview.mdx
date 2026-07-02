@@ -15,6 +15,10 @@ There are 4 types of transactions in DEMOS.
 
 Using the demos sdk, you can create, sign and broadcast transactions as discussed in following chapters.
 
+<Tip>
+Want one call per transaction instead of the build → sign → confirm → broadcast steps? See [Programmatic Transactions (`demos.run`)](/sdk/websdk/transactions/programmatic-transactions) — an additive `demos.run.*` facade with an automatic fee ceiling. The step-by-step API below stays fully supported.
+</Tip>
+
 <Info>
 Before sending native transactions, read [Amounts & Denominations](/sdk/websdk/transactions/denominations) to understand how DEM and OS amounts are passed (`bigint` is preferred), how the SDK detects the active wire format via `getNetworkInfo`, and the `SubDemPrecisionError` guard for sub-DEM amounts on pre-fork nodes.
 </Info>
