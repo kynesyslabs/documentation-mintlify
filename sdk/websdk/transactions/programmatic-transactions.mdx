@@ -133,6 +133,93 @@ const r = await demos.run.pay(to, amount, {
 })
 ```
 
+## Nonce management
+
+When sending a single transaction using a `Demos` client, the nonce for that transaction is
+read from the network and incremented by 1 to match what's expected on-chain.
+
+When broadcasting batch transactions, calling `Demos` transaction methods at the same time to
+create multiple transactions will result in multiple transactions having the same nonce. This means
+that only one of them will be executed while all the rest will fail.
+
+```typescript
+import { denomination } from "@kynesyslabs/demosdk"
+
+// only one of these is executed
+// the rest are rejected
+await Promise.all([
+    demos.run.pay(alice, denomination.demToOs(1)),
+    demos.run.pay(bob, denomination.demToOs(2)),
+    demos.run.pay(carol, denomination.demToOs(3)),
+])
+```
+
+To fix this, we need to assign increasing nonces for each transaction, in the order we want them
+to be executed.
+
+### Auto-nonce
+
+The `Demos` client has an **opt-in** built-in auto-nonce tracking feature. You can enable it as shown below:
+
+```typescript
+const demos = await Demos.start("https://node2.demos.sh", mnemonic)
+demos.enableAutoNonce()
+
+await Promise.all([
+    demos.run.pay(alice, denomination.demToOs(1)), // nonce == N+1
+    demos.run.pay(bob, denomination.demToOs(2)), // nonce == N+2
+    demos.run.pay(carol, denomination.demToOs(3)), // nonce == N+3
+])
+```
+
+All the transactions get incrementing nonces and they will all be executed, even if they are not broadcasted in order.
+
+<Tip>
+The nonce for the connected wallet will only be tracked locally on that `Demos` instance. If you create a new instance, you'll need to enable it again.
+</Tip>
+
+Auto-nonce applies to every transaction builder on the
+instance — `demos.run.*`, the classic `demos.pay` / `demos.transfer`, storage,
+escrow, tokens, and so on.
+
+You can inspect or switch it off at any time:
+
+```typescript
+demos.autoNonceEnabled    // boolean
+demos.disableAutoNonce()  // switch off and clear counters
+```
+
+<Info>
+If the same key signs from another device or process, or a reserved transaction never
+lands on-chain, the counter drifts from the chain. You can recover as shown below:
+</Info>
+
+```typescript
+try {
+    await demos.run.pay(to, amount)
+} catch (e) {
+    // after a nonce rejection, reseed and retry
+    demos.resetNonce(demos.getAddress())
+    await demos.run.pay(to, amount)
+}
+```
+
+Reconnecting to a different node resets all counters automatically.
+
+### Explicit nonces
+
+Every `demos.run.*` method (and the classic builders) accepts a `nonce`
+option. You can track the nonce manually and override any internally calculated nonce as shown:
+
+```typescript
+// current nonce
+const base = await demos.getAddressNonce(demos.getAddress())
+
+await demos.run.pay(alice, amount, { nonce: base + 1 })
+await demos.run.pay(bob, amount, { nonce: base + 2 })
+await demos.run.pay(carol, amount, { nonce: base + 3 })
+```
+
 ## Namespaces
 
 ### `demos.run.pay` / `demos.run.transfer`
