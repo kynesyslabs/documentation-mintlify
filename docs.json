@@ -219,7 +219,8 @@
                   "sdk/cookbook/swap/crosschain-swap"
                 ]
               },
-              "sdk/cookbook/evm-contract-write-transactions"
+              "sdk/cookbook/evm-contract-write-transactions",
+              "sdk/cookbook/d402"
             ]
           },
           {
