@@ -147,7 +147,6 @@
                   "sdk/cross-chain/near",
                   "sdk/cross-chain/ton",
                   "sdk/cross-chain/xrpl",
-                  "sdk/cross-chain/ten",
                   "sdk/cross-chain/tron",
                   "sdk/cross-chain/ibc"
                 ]
